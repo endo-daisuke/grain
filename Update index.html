@@ -1243,75 +1243,6 @@ function fallbackSavePreview(file, blobURL){
     .catch(() => openSavePreview(file, blobURL || null));
 }
 
-function saveOneExportFile(file, button, imageURL){
-  // 共有シートはタップと同じ実行フローで呼ぶ。await を挟むとユーザー操作扱いが切れて弾かれる
-  if (canShareFiles([file])){
-    try {
-      navigator.share({files:[file]}).catch(err => {
-        if (err && err.name === "AbortError") return;   // ユーザーがシートを閉じただけ
-        fallbackSavePreview(file, imageURL);
-      });
-      return;
-    } catch(_){ /* 同期的に落ちた場合は下へ */ }
-  }
-  fallbackSavePreview(file, imageURL);
-}
-
-/* 共有シートが自動で開けなかったときだけ出す。押し直せば新しい操作として通る */
-function showRetrySave(file){
-  revokeExportResultURLs();
-
-  const wrap = document.createElement("div");
-  wrap.className = "export-gallery";
-
-  const head = document.createElement("div");
-  head.className = "export-gallery-head";
-  head.textContent = "加工が完了しました";
-  const sub = document.createElement("div");
-  sub.className = "export-gallery-sub";
-  sub.textContent = "下のボタンで共有シートを開き、「画像を保存」を選んでください。";
-  wrap.append(head, sub);
-
-  const row = document.createElement("div");
-  row.className = "export-item";
-
-  const img = document.createElement("img");
-  const url = URL.createObjectURL(file);
-  exportResultURLs.push(url);
-  img.src = url;
-  img.alt = "加工済み画像";
-
-  const meta = document.createElement("div");
-  meta.className = "meta";
-  const name = document.createElement("div");
-  name.className = "file-name";
-  name.textContent = file.name;
-  const btn = document.createElement("button");
-  btn.type = "button";
-  btn.className = "save-one";
-  btn.textContent = "写真に保存";
-  btn.onclick = () => saveOneExportFile(file, btn, url);
-
-  meta.append(name, btn);
-  row.append(img, meta);
-  wrap.appendChild(row);
-
-  const close = document.createElement("button");
-  close.type = "button";
-  close.className = "export-gallery-close";
-  close.textContent = "閉じる";
-  close.onclick = () => {
-    revokeExportResultURLs();
-    hideNote();
-    render();
-  };
-  wrap.appendChild(close);
-
-  note.innerHTML = "";
-  note.appendChild(wrap);
-  note.classList.add("show");
-}
-
 async function exportCurrentViewFile(){
   let c2 = buildExport(exportAreaCap());
   if (!c2) c2 = buildExport(8e6);
@@ -1324,31 +1255,129 @@ async function exportCurrentViewFile(){
   }
 }
 
-/* 今表示している1枚だけを書き出して、そのまま共有シートを開く。
-   WebKit のユーザー操作の有効期間は約5秒。加工がそれに収まれば
-   await を挟んでも share() は通る。溢れたら保存ボタンを出して押し直してもらう */
-document.getElementById("b-save").onclick = async () => {
+/* ---------- 保存 ----------
+   iOS の navigator.share() は「ユーザー操作の最中」でないと弾かれる。
+   await を挟むと弾かれることがあるので、加工済みファイルを保持しておき、
+   2回目以降のタップは await ゼロで同期的に share() を呼ぶ。
+   これでタイミングの問題が原理的に起きない */
+
+let preparedExport = null;    // {key, file}
+let saveDiag = [];
+function dg(msg){ saveDiag.push(msg); }
+
+function exportKey(){
+  try {
+    return JSON.stringify(captureCurrentSettings()) + "|" + currentFileIndex +
+           "|" + S.fmt + "|" + (userFiles[currentFileIndex]?.name || "");
+  } catch(_){ return "k" + Date.now(); }
+}
+
+function saveBtn(){ return document.getElementById("b-save"); }
+
+function setSaveLabel(t){
+  const b = saveBtn();
+  if (b) b.textContent = t;
+}
+
+/* 失敗したときに何が起きたかを画面に出す。これを見せてもらえれば原因が分かる */
+function showSaveDiag(file, headline){
+  const lines = [
+    headline,
+    "",
+    "navigator.share: " + (navigator.share ? "あり" : "なし"),
+    "navigator.canShare: " + (navigator.canShare ? "あり" : "なし"),
+    "canShare({files}): " + (() => {
+      try { return navigator.canShare ? String(navigator.canShare({files:[file]})) : "判定不可"; }
+      catch(e){ return "例外 " + (e.name || e); }
+    })(),
+    "ファイル: " + file.name + " / " + file.type + " / " + Math.round(file.size/1024) + "KB",
+    "secure context: " + String(window.isSecureContext),
+    "iframe内: " + String(window.top !== window.self),
+    "",
+    "経過:",
+    ...saveDiag.map(x => "  " + x)
+  ];
+  showNote(lines.join("\n"));
+}
+
+function shareNow(file, isFirstTry){
+  if (!navigator.share){
+    dg("navigator.share が無い");
+    fallbackSavePreview(file, null);
+    return;
+  }
+  if (navigator.canShare){
+    let ok = false;
+    try { ok = navigator.canShare({files:[file]}); }
+    catch(e){ dg("canShare で例外 " + (e.name || e)); }
+    if (!ok){
+      dg("canShare({files}) が false");
+      showSaveDiag(file, "この環境は画像の共有に対応していないようです。");
+      return;
+    }
+  }
+
+  let p;
+  try {
+    p = navigator.share({files:[file]});
+  } catch(e){
+    dg("share() が同期的に例外 " + (e.name || "") + " " + (e.message || e));
+    if (isFirstTry){ armSecondTap(file); } else { showSaveDiag(file, "共有シートを開けませんでした。"); }
+    return;
+  }
+
+  p.then(() => {
+    dg("share 成功");
+    hideNote();
+    setSaveLabel("写真に保存");
+  }).catch(e => {
+    if (e && e.name === "AbortError"){ hideNote(); setSaveLabel("写真に保存"); return; }
+    dg("share 失敗 " + (e.name || "") + " " + (e.message || e));
+    if (isFirstTry){ armSecondTap(file); } else { showSaveDiag(file, "共有シートを開けませんでした。"); }
+  });
+}
+
+/* 加工は終わっているので、次のタップは await ゼロで share() に入れる */
+function armSecondTap(file){
+  setSaveLabel("もう一度タップで保存");
+  showNote("加工は終わりました。\n\niOS が保存を一度止めたので、\nもう一度「もう一度タップで保存」を押してください。\n2回目は確実に共有シートが開きます。");
+}
+
+saveBtn().onclick = async () => {
+  const key = exportKey();
+
+  // 準備済みなら await を一切挟まずそのまま共有シートへ
+  if (preparedExport && preparedExport.key === key){
+    dg("準備済みを同期で共有");
+    shareNow(preparedExport.file, false);
+    return;
+  }
+
+  saveDiag = [];
   revokeExportResultURLs();
+  preparedExport = null;
   hideNote();
+
+  const btn = saveBtn();
+  btn.disabled = true;
+  setSaveLabel("加工中…");
+  const t0 = Date.now();
 
   let f;
   try {
     f = await exportCurrentViewFile();
   } catch(err){
+    btn.disabled = false;
+    setSaveLabel("写真に保存");
     showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
     return;
   }
+  btn.disabled = false;
+  setSaveLabel("写真に保存");
 
-  if (canShareFiles([f])){
-    try {
-      navigator.share({files:[f]}).then(hideNote).catch(err => {
-        if (err && err.name === "AbortError"){ hideNote(); return; }
-        showRetrySave(f);   // 操作の有効期間切れなど
-      });
-      return;
-    } catch(_){}
-  }
-  showRetrySave(f);
+  dg("加工 " + ((Date.now()-t0)/1000).toFixed(1) + "秒");
+  preparedExport = {key, file:f};
+  shareNow(f, true);
 };
 
 /* ---------- 画像読み込み ---------- */
