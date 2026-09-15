@@ -107,21 +107,34 @@
   section.fold.open > h2 ~ .btns{display:flex}
 
   @media (max-width:880px){
+    /* 写真2 : メニュー1 の縦並び。写真は常に上に出たまま、メニュー側だけが中でスクロールする */
+    html,body{overflow:hidden;height:100%}
+    .body{flex-direction:column;min-height:0}
+    main{order:1;flex:2 1 0;height:auto;width:100%;min-height:0}
+    aside{
+      order:2;flex:1 1 0;width:100%;height:auto;min-height:0;
+      overflow-y:auto;-webkit-overflow-scrolling:touch;
+      border-right:none;border-top:1px solid #1b1b1b
+    }
+    section{padding:12px 16px}
+    .head{padding:12px}
+    section h2{margin-bottom:10px;font-size:12px}
+    .ctl label{font-size:12.5px}
+    .ctl .val{font-size:12px}
+    .caption{font-size:11px}
+    .btns{gap:4px}
+    aside button{padding:9px 12px;font-size:12.5px}
     input[type=range]{height:30px}
     input[type=range]::-webkit-slider-thumb{width:22px;height:22px;margin-top:-10px}
     input[type=range]::-moz-range-thumb{width:22px;height:22px}
-    .ctl{margin-bottom:18px}
-    button{padding:9px 13px}
-    main{height:52vh}
-    .hud button{padding:7px 11px}
-    body{overflow:auto}
-    .body{flex-direction:column;min-height:0}
-    aside{width:100%;flex:none;height:auto;order:2;border-right:none;border-top:1px solid #1b1b1b}
-    main{order:1;height:56vh;flex:none}
+    .ctl{margin-bottom:16px}
+    header{padding:7px 10px}
     header .brand{display:none}
     header .acts{width:100%}
-    header button{flex:1}
+    header button{flex:1;padding:9px 6px;font-size:12px}
+    .hud button{padding:7px 10px}
   }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
