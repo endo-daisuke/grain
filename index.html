@@ -541,6 +541,7 @@ let userFiles = [];
 let currentFileIndex = -1;
 let thumbURLs = [];
 let loadUserToken = 0;
+let preparedBatchFiles = [];
 
 const MAX_BATCH_FILES = 5;
 const USER_PRESET_KEY = "grain_user_presets_v1";
@@ -720,6 +721,7 @@ async function selectBatchIndex(idx){
   await loadUser(userFiles[idx]);
 }
 async function setBatchFiles(files){
+  preparedBatchFiles = [];
   const list = Array.from(files || []).filter(f => f && ((f.type || "").startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name)));
   if (!list.length) return;
   const clipped = list.slice(0, MAX_BATCH_FILES);
@@ -1137,22 +1139,79 @@ function exportNameFor(originalName, index){
   return base + "_grain" + ext;
 }
 
+function canShareFiles(files){
+  try {
+    return !!(navigator.share && navigator.canShare && files && files.length && navigator.canShare({files}));
+  } catch(_){
+    return false;
+  }
+}
+
+async function shareFilesNow(files){
+  if (!canShareFiles(files)) throw new Error("この環境では複数画像の共有に対応していません。");
+  // files だけを渡す。iOS の「画像を保存」が出やすい最小構成にする。
+  const result = navigator.share({files});
+  if (result && typeof result.then === "function") await result;
+}
+
+function showBatchShareReady(files){
+  preparedBatchFiles = files.slice();
+  const n = preparedBatchFiles.length;
+  showNoteHTML(
+    `<div style="font-size:14px;font-weight:600;margin-bottom:6px">${n}枚の準備ができました</div>` +
+    `<div style="color:#9b9895;margin-bottom:12px">下のボタンを押すと、${n}枚まとめてiPhoneの共有シートへ送ります。</div>` +
+    `<button id="batch-share-now" class="wide" style="background:#b8935c;border-color:#b8935c;color:#221a0e;font-weight:600">${n}枚まとめて共有</button>` +
+    `<button id="batch-share-cancel" class="wide" style="margin-top:7px">キャンセル</button>`
+  );
+
+  const shareBtn = document.getElementById("batch-share-now");
+  const cancelBtn = document.getElementById("batch-share-cancel");
+
+  if (shareBtn) shareBtn.onclick = async () => {
+    if (!preparedBatchFiles.length) return;
+    shareBtn.disabled = true;
+    shareBtn.textContent = "共有シートを開いています…";
+    try {
+      await shareFilesNow(preparedBatchFiles);
+      preparedBatchFiles = [];
+      hideNote();
+      render();
+    } catch(e){
+      // ユーザーが共有シートを閉じた場合は、もう一度押せるようにする。
+      shareBtn.disabled = false;
+      shareBtn.textContent = `${n}枚まとめて共有`;
+      if (!(e && e.name === "AbortError")) {
+        const msg = e && e.message ? e.message : String(e || "共有できませんでした");
+        const cap = document.createElement("div");
+        cap.className = "caption";
+        cap.style.marginTop = "8px";
+        cap.textContent = msg;
+        if (!document.getElementById("batch-share-error")) {
+          cap.id = "batch-share-error";
+          shareBtn.parentNode.appendChild(cap);
+        }
+      }
+    }
+  };
+  if (cancelBtn) cancelBtn.onclick = () => {
+    preparedBatchFiles = [];
+    hideNote();
+    render();
+  };
+}
+
 async function deliverFiles(files){
   if (!files || !files.length) throw new Error("保存する画像がありませんでした");
 
-  if (isIOSDevice() && navigator.canShare){
+  if (isIOSDevice() && canShareFiles(files)){
     try {
-      if (navigator.canShare({files})){
-        await navigator.share({
-          files,
-          title: files.length > 1 ? `${files.length}枚の画像` : files[0].name
-        });
-        hideNote();
-        render();
-        return;
-      }
+      await shareFilesNow(files);
+      hideNote();
+      render();
+      return;
     } catch(e){
-      // 共有シートを閉じた／共有に失敗した場合は通常ダウンロードへフォールバック
+      if (e && e.name === "AbortError") return;
+      // 共有に失敗した場合のみ通常ダウンロードへフォールバック
     }
   }
 
@@ -1197,23 +1256,50 @@ async function exportFileToOutput(file, idx){
 
 document.getElementById("b-save").onclick = async () => {
   const batch = userFiles.length ? userFiles.slice() : [];
-  const showProgress = batch.length > 1 || !isIOSDevice();
+  preparedBatchFiles = [];
 
-  if (showProgress) showNote(batch.length > 1 ? `0/${batch.length} を書き出し中…` : "書き出し中…");
-  else hideNote();
+  // 1枚はこれまで通り、処理後すぐ共有を試す。
+  if (batch.length <= 1){
+    if (!isIOSDevice()) showNote("書き出し中…");
+    else hideNote();
+    try {
+      const f = batch.length === 1 ? await exportFileToOutput(batch[0], 0) : await exportCurrentViewFile();
+      await deliverFiles([f]);
+    } catch(err){
+      showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
+    }
+    return;
+  }
 
+  // 複数枚は原寸処理に時間がかかるため、iOS の transient user activation が切れやすい。
+  // まず全画像を作成し、その後の明示的なタップでまとめて共有する。
+  showNote(`0/${batch.length} を書き出し準備中…`);
   try {
     const files = [];
-    if (!batch.length){
-      files.push(await exportCurrentViewFile());
-    } else {
-      for (let i=0; i<batch.length; i++){
-        if (showProgress) showNote(`${i+1}/${batch.length} を書き出し中…\n${batch[i].name}`);
-        files.push(await exportFileToOutput(batch[i], i));
-      }
+    for (let i=0; i<batch.length; i++){
+      showNote(`${i+1}/${batch.length} を書き出し準備中…
+${batch[i].name}`);
+      files.push(await exportFileToOutput(batch[i], i));
     }
-    if (showProgress && batch.length > 1) showNote(`共有シートを開いています…\n${files.length}枚`);
-    await deliverFiles(files);
+
+    if (isIOSDevice()){
+      // 処理が非常に速く、まだ user activation が生きているなら1タップのまま共有。
+      const stillActive = !navigator.userActivation || navigator.userActivation.isActive;
+      if (stillActive && canShareFiles(files)){
+        try {
+          await shareFilesNow(files);
+          hideNote();
+          render();
+          return;
+        } catch(e){
+          if (e && e.name === "AbortError") return;
+        }
+      }
+      // 通常はこちら。次のタップが確実な user activation になる。
+      showBatchShareReady(files);
+    } else {
+      await deliverFiles(files);
+    }
   } catch(err){
     showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
   }
