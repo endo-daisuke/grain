@@ -1175,7 +1175,7 @@ function openSavePreview(file, existingURL){
 
   const guide = document.createElement("div");
   guide.className = "guide";
-  guide.innerHTML = '画像を長押しして「写真に保存」<small>この画面では共有シートを使わず、開いた画像をそのまま保存します。</small>';
+  guide.innerHTML = '画像を長押しして「写真に保存」<small>共有シートが使えなかったときの予備画面です。</small>';
 
   const imageWrap = document.createElement("div");
   imageWrap.className = "image-wrap";
@@ -1198,8 +1198,34 @@ function openSavePreview(file, existingURL){
   document.body.appendChild(overlay);
 }
 
+function fileToDataURL(file){
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload  = () => res(fr.result);
+    fr.onerror = () => rej(new Error("画像を読み込めませんでした"));
+    fr.readAsDataURL(file);
+  });
+}
+
+/* 長押しの予備画面。blob: だと iOS で「写真に保存」が出ないので data: に変換して渡す */
+function fallbackSavePreview(file){
+  fileToDataURL(file)
+    .then(u => openSavePreview(file, u))
+    .catch(() => openSavePreview(file, null));
+}
+
 function saveOneExportFile(file, button, imageURL){
-  openSavePreview(file, imageURL);
+  // 共有シートはタップと同じ実行フローで呼ぶ。await を挟むとユーザー操作扱いが切れて弾かれる
+  if (canShareFiles([file])){
+    try {
+      navigator.share({files:[file]}).catch(err => {
+        if (err && err.name === "AbortError") return;   // ユーザーがシートを閉じただけ
+        fallbackSavePreview(file);
+      });
+      return;
+    } catch(_){ /* 同期的に落ちた場合は下へ */ }
+  }
+  fallbackSavePreview(file);
 }
 
 function showExportResults(files){
@@ -1213,7 +1239,7 @@ function showExportResults(files){
   head.textContent = `${files.length}枚の加工が完了しました`;
   const sub = document.createElement("div");
   sub.className = "export-gallery-sub";
-  sub.textContent = "下のボタンで保存用の画像を開き、画像を長押しして「写真に保存」を選んでください。";
+  sub.textContent = "各画像の「写真に保存」から共有シートを開き、「画像を保存」を選んでください。";
   wrap.append(head, sub);
 
   files.forEach((file, idx) => {
@@ -1234,7 +1260,7 @@ function showExportResults(files){
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "save-one";
-    btn.textContent = "保存用画像を開く";
+    btn.textContent = "写真に保存";
     btn.onclick = () => saveOneExportFile(file, btn, url);
 
     meta.append(name, btn);
