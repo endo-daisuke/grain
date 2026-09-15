@@ -94,6 +94,12 @@
   .export-item .file-name{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:7px}
   .export-item .save-one{width:100%;background:var(--mark);border-color:var(--mark);color:#221a0e;font-weight:600}
   .export-gallery-close{width:100%;margin-top:2px}
+  .save-preview{position:fixed;inset:0;z-index:1000;background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px;gap:12px}
+  .save-preview .guide{color:#fff;font-size:14px;font-weight:600;text-align:center;line-height:1.6}
+  .save-preview .guide small{display:block;color:#bbb;font-size:11px;font-weight:400;margin-top:4px}
+  .save-preview .image-wrap{flex:1;min-height:0;width:100%;display:flex;align-items:center;justify-content:center;overflow:auto;-webkit-overflow-scrolling:touch}
+  .save-preview img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;-webkit-touch-callout:default;user-select:auto}
+  .save-preview .close-save-preview{width:min(420px,100%);padding:12px}
 
   main{flex:1;position:relative;overflow:hidden;background:var(--surround);touch-action:none}
   #stage{position:absolute;top:0;left:0;transform-origin:0 0;touch-action:none}
@@ -168,7 +174,7 @@
   <div class="brand">グレイン合わせ台</div>
   <div class="acts">
     <button id="b-open">写真を開く</button>
-    <button id="b-save">書き出す</button>
+    <button id="b-save">写真に保存</button>
     <button id="b-fmt" title="書き出し形式を切り替え">PNG</button>
     <button id="b-reset">実測値に戻す</button>
   </div>
@@ -196,7 +202,7 @@
     </div>
     <div class="ctl">
       <div class="row"><label for="s-size">粒径</label><span class="val num" id="v-size">1.19</span></div>
-      <input type="range" id="s-size" min="0.6" max="5" value="1.19" step="0.01">
+      <input type="range" id="s-size" min="0.2" max="5" value="1.19" step="0.01">
       <label class="check" style="margin-top:6px">
         <input type="checkbox" id="c-scale">
         粒径を画像の横幅で換算する
@@ -559,8 +565,9 @@ const USER_PRESET_KEY = "grain_user_presets_v1";
 function grainPxFull(){
   return S.autoScale ? S.size * (S.fullW / REF_WIDTH) : S.size;
 }
+const GRAIN_FLOOR = 0.20;   // これ以下はピクセルより細かく、見た目が変わらない
 function grainPxWork(){
-  return Math.max(0.35, grainPxFull() * S.previewScale) + 0.013;
+  return Math.max(GRAIN_FLOOR, grainPxFull() * S.previewScale) + 0.013;
 }
 
 const BAND_BUDGET = 4e6;   // 一度に確保するノイズの上限画素数
@@ -581,7 +588,11 @@ function getNoise(w, h, s, yOff){
 /* ---------- 本体 ---------- */
 function apply(srcPix, w, h, sizePx, splitPx, realSrc){
   const out = new Uint8ClampedArray(srcPix.length);
-  const bandH = Math.max(1, Math.min(h, Math.floor(BAND_BUDGET / w)));
+  // ノイズ格子のセル数は帯の画素数 / sizePx^2 で増える。
+  // 粒を細かくすると格子が画像より大きくなるので、帯の高さを sizePx^2 で絞って
+  // 格子の総セル数を一定に保つ
+  const bandPx = Math.min(BAND_BUDGET, Math.max(1, BAND_BUDGET * sizePx * sizePx));
+  const bandH = Math.max(1, Math.min(h, Math.floor(bandPx / w)));
   const t = S.chroma;                    // 0=3色共通の粒  1=完全に独立
   const a0 = Math.sqrt(1-t*t), a1 = t;   // これで合成後も分散1のまま
   const wR = S.wR, wG = S.wG, wB = S.wB;
@@ -665,7 +676,7 @@ function isIOSDevice(){
 function updateSaveButtonLabel(){
   const btn = document.getElementById("b-save");
   if (!btn) return;
-  btn.textContent = userFiles.length > 1 ? `${userFiles.length}枚を書き出す` : "書き出す";
+  btn.textContent = "写真に保存";
 }
 function revokeThumbs(){
   thumbURLs.forEach(u => URL.revokeObjectURL(u));
@@ -1058,6 +1069,19 @@ function canvasAlive(c){
   } catch(e){ return false; }
 }
 
+/* 幅高を0にすると裏バッファが即返る。GC待ちにしないための決め手 */
+function releaseCanvas(c){
+  try { if (c){ c.width = 0; c.height = 0; } } catch(_){}
+}
+
+/* iOS Safari はキャンバス面積とプロセスメモリの両方に上限がある。
+   原寸で試してから落とす作りだと、失敗ではなくタブごと落ちて戻ってこない。
+   だから最初から上限を掛ける。数値を上げると大きく書き出せるが落ちやすくなる */
+const IOS_EXPORT_AREA = 16.7e6;
+function exportAreaCap(){
+  return isIOSDevice() ? IOS_EXPORT_AREA : null;
+}
+
 /* 原寸のきれいな元データから合成し直す。プレビュー用キャンバスは既に粒が乗っているので使わない */
 function buildExportFromCanvas(sourceCanvas, maxArea){
   const fullW0 = sourceCanvas.width;
@@ -1071,8 +1095,9 @@ function buildExportFromCanvas(sourceCanvas, maxArea){
   c0.width = w; c0.height = h;
   const x0 = c0.getContext("2d");
   x0.drawImage(sourceCanvas, 0, 0, w, h);
-  if (!canvasAlive(c0)) return null;
-  const data = x0.getImageData(0,0,w,h).data;
+  if (!canvasAlive(c0)){ releaseCanvas(c0); return null; }
+  let data = x0.getImageData(0,0,w,h).data;
+  releaseCanvas(c0);   // 画素は data に移ったのでキャンバスの裏バッファを先に返す
 
   const keepPs = S.previewScale, keepView = S.view, keepFullW = S.fullW;
   let px;
@@ -1081,7 +1106,7 @@ function buildExportFromCanvas(sourceCanvas, maxArea){
     S.fullW = fullW0;
     if (S.view === "split") S.view = "single";
     noiseCache = {key:"", f:null};
-    const gp = Math.max(0.35, grainPxFull() * (w/fullW0)) + 0.013;
+    const gp = Math.max(GRAIN_FLOOR, grainPxFull() * (w/fullW0)) + 0.013;
     px = apply(data, w, h, gp, -1, null);
   } finally {
     S.previewScale = keepPs;
@@ -1089,12 +1114,15 @@ function buildExportFromCanvas(sourceCanvas, maxArea){
     S.fullW = keepFullW;
     noiseCache = {key:"", f:null};
   }
+  data = null;   // apply が済めば元画素は不要
 
   const c2 = document.createElement("canvas");
   c2.width = w; c2.height = h;
   const x2 = c2.getContext("2d");
-  const im = x2.createImageData(w, h);
-  im.data.set(px);
+  // createImageData + set は原寸1枚分を丸ごと余計に取る。px をそのまま包む
+  let im;
+  try { im = new ImageData(px, w, h); }
+  catch(_){ im = x2.createImageData(w, h); im.data.set(px); }
   x2.putImageData(im, 0, 0);
   return c2;
 }
@@ -1161,171 +1189,195 @@ function revokeExportResultURLs(){
   exportResultURLs = [];
 }
 
-async function saveOneExportFile(file, button){
+function openSavePreview(file, existingURL){
   if (!file) return;
-  const oldText = button ? button.textContent : "";
-  if (button){ button.disabled = true; button.textContent = "保存を開いています…"; }
 
-  try {
-    if (isIOSDevice() && canShareFiles([file])){
-      await navigator.share({files:[file]});
-      if (button) button.textContent = "保存済み";
-      return;
-    }
-    if (tryDownload(file, file.name, inFrame)){
-      if (button) button.textContent = "保存済み";
-      return;
-    }
-    throw new Error("保存できませんでした");
-  } catch(e){
-    if (button){
-      button.disabled = false;
-      button.textContent = (e && e.name === "AbortError") ? oldText : "もう一度保存";
-    }
-  }
-}
+  const overlay = document.createElement("div");
+  overlay.className = "save-preview";
 
-function showExportResults(files){
-  revokeExportResultURLs();
+  const guide = document.createElement("div");
+  guide.className = "guide";
+  guide.innerHTML = '画像を長押しして「写真に保存」<small>共有シートが使えなかったときの予備画面です。</small>';
 
-  const wrap = document.createElement("div");
-  wrap.className = "export-gallery";
-
-  const head = document.createElement("div");
-  head.className = "export-gallery-head";
-  head.textContent = `${files.length}枚の加工が完了しました`;
-  const sub = document.createElement("div");
-  sub.className = "export-gallery-sub";
-  sub.textContent = "下の「写真に保存」を順番に押してください。加工はすでに完了しているので、保存はすぐ開きます。";
-  wrap.append(head, sub);
-
-  files.forEach((file, idx) => {
-    const row = document.createElement("div");
-    row.className = "export-item";
-
-    const img = document.createElement("img");
-    const url = URL.createObjectURL(file);
-    exportResultURLs.push(url);
-    img.src = url;
-    img.alt = `${idx+1}枚目の加工済み画像`;
-
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const name = document.createElement("div");
-    name.className = "file-name";
-    name.textContent = `${idx+1}. ${file.name}`;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "save-one";
-    btn.textContent = "写真に保存";
-    btn.onclick = () => saveOneExportFile(file, btn);
-
-    meta.append(name, btn);
-    row.append(img, meta);
-    wrap.appendChild(row);
-  });
+  const imageWrap = document.createElement("div");
+  imageWrap.className = "image-wrap";
+  const img = document.createElement("img");
+  let ownURL = null;
+  img.src = existingURL || (ownURL = URL.createObjectURL(file));
+  img.alt = "保存する加工済み画像";
+  imageWrap.appendChild(img);
 
   const close = document.createElement("button");
   close.type = "button";
-  close.className = "export-gallery-close";
-  close.textContent = "閉じる";
+  close.className = "close-save-preview";
+  close.textContent = "一覧に戻る";
   close.onclick = () => {
-    revokeExportResultURLs();
-    hideNote();
-    render();
+    if (ownURL) URL.revokeObjectURL(ownURL);
+    overlay.remove();
   };
-  wrap.appendChild(close);
 
-  note.innerHTML = "";
-  note.appendChild(wrap);
-  note.classList.add("show");
+  overlay.append(guide, imageWrap, close);
+  document.body.appendChild(overlay);
 }
 
-async function deliverFiles(files){
-  if (!files || !files.length) throw new Error("保存する画像がありませんでした");
+function fileToDataURL(file){
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload  = () => res(fr.result);
+    fr.onerror = () => rej(new Error("画像を読み込めませんでした"));
+    fr.readAsDataURL(file);
+  });
+}
 
-  if (files.length > 1){
-    showExportResults(files);
+/* 長押しの予備画面。blob: だと iOS で「写真に保存」が出ないので data: に変換して渡す。
+   ただし data: は base64 なので原寸の約1.33倍を文字列で抱える。
+   大きい画像でこれをやるとタブごと落ちるので、小さいときだけにする */
+const DATAURL_LIMIT = 6 * 1024 * 1024;
+function fallbackSavePreview(file, blobURL){
+  if (file.size > DATAURL_LIMIT){
+    openSavePreview(file, blobURL || null);
     return;
   }
-
-  const file = files[0];
-  if (isIOSDevice() && canShareFiles([file])){
-    try {
-      await navigator.share({files:[file]});
-      hideNote();
-      render();
-      return;
-    } catch(e){
-      if (e && e.name === "AbortError") return;
-    }
-  }
-
-  if (tryDownload(file, file.name, inFrame)){
-    hideNote();
-    render();
-    return;
-  }
-
-  showNote("保存できませんでした。Safariでは共有メニューから保存を試してください。");
+  fileToDataURL(file)
+    .then(u => openSavePreview(file, u))
+    .catch(() => openSavePreview(file, blobURL || null));
 }
 
 async function exportCurrentViewFile(){
-  let c2 = buildExport(null);
-  if (!c2) c2 = buildExport(16.7e6);
+  let c2 = buildExport(exportAreaCap());
+  if (!c2) c2 = buildExport(8e6);
   if (!c2) c2 = buildExport(4e6);
   if (!c2) throw new Error("書き出し用のキャンバスを確保できませんでした。");
-  return await canvasToExportFile(c2, exportNameFor(userFiles[currentFileIndex]?.name || ("grain_" + Date.now()), Math.max(0, currentFileIndex)));
+  try {
+    return await canvasToExportFile(c2, exportNameFor(userFiles[currentFileIndex]?.name || ("grain_" + Date.now()), Math.max(0, currentFileIndex)));
+  } finally {
+    releaseCanvas(c2);
+  }
 }
 
-async function exportFileToOutput(file, idx){
-  const r = await decodeFile(file);
-  const img = r.img;
-  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
-  if (!iw || !ih) throw new Error(file.name + " の寸法が取得できませんでした");
+/* ---------- 保存 ----------
+   iOS の navigator.share() は「ユーザー操作の最中」でないと弾かれる。
+   await を挟むと弾かれることがあるので、加工済みファイルを保持しておき、
+   2回目以降のタップは await ゼロで同期的に share() を呼ぶ。
+   これでタイミングの問題が原理的に起きない */
 
-  const src = document.createElement("canvas");
-  src.width = iw; src.height = ih;
-  src.getContext("2d").drawImage(img, 0, 0);
+let preparedExport = null;    // {key, file}
+let saveDiag = [];
+function dg(msg){ saveDiag.push(msg); }
 
-  let c2 = buildExportFromCanvas(src, null);
-  if (!c2) c2 = buildExportFromCanvas(src, 16.7e6);
-  if (!c2) c2 = buildExportFromCanvas(src, 4e6);
-  if (!c2) throw new Error(file.name + " の書き出し用キャンバスを確保できませんでした。");
-
-  return await canvasToExportFile(c2, exportNameFor(file.name, idx));
+function exportKey(){
+  try {
+    return JSON.stringify(captureCurrentSettings()) + "|" + currentFileIndex +
+           "|" + S.fmt + "|" + (userFiles[currentFileIndex]?.name || "");
+  } catch(_){ return "k" + Date.now(); }
 }
 
-document.getElementById("b-save").onclick = async () => {
-  const batch = userFiles.length ? userFiles.slice() : [];
-  revokeExportResultURLs();
+function saveBtn(){ return document.getElementById("b-save"); }
 
-  // 1枚は従来通り、書き出し後すぐ保存を開く。
-  if (batch.length <= 1){
-    if (!isIOSDevice()) showNote("書き出し中…");
-    else hideNote();
-    try {
-      const f = batch.length === 1 ? await exportFileToOutput(batch[0], 0) : await exportCurrentViewFile();
-      await deliverFiles([f]);
-    } catch(err){
-      showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
+function setSaveLabel(t){
+  const b = saveBtn();
+  if (b) b.textContent = t;
+}
+
+/* 失敗したときに何が起きたかを画面に出す。これを見せてもらえれば原因が分かる */
+function showSaveDiag(file, headline){
+  const lines = [
+    headline,
+    "",
+    "navigator.share: " + (navigator.share ? "あり" : "なし"),
+    "navigator.canShare: " + (navigator.canShare ? "あり" : "なし"),
+    "canShare({files}): " + (() => {
+      try { return navigator.canShare ? String(navigator.canShare({files:[file]})) : "判定不可"; }
+      catch(e){ return "例外 " + (e.name || e); }
+    })(),
+    "ファイル: " + file.name + " / " + file.type + " / " + Math.round(file.size/1024) + "KB",
+    "secure context: " + String(window.isSecureContext),
+    "iframe内: " + String(window.top !== window.self),
+    "",
+    "経過:",
+    ...saveDiag.map(x => "  " + x)
+  ];
+  showNote(lines.join("\n"));
+}
+
+function shareNow(file, isFirstTry){
+  if (!navigator.share){
+    dg("navigator.share が無い");
+    fallbackSavePreview(file, null);
+    return;
+  }
+  if (navigator.canShare){
+    let ok = false;
+    try { ok = navigator.canShare({files:[file]}); }
+    catch(e){ dg("canShare で例外 " + (e.name || e)); }
+    if (!ok){
+      dg("canShare({files}) が false");
+      showSaveDiag(file, "この環境は画像の共有に対応していないようです。");
+      return;
     }
+  }
+
+  let p;
+  try {
+    p = navigator.share({files:[file]});
+  } catch(e){
+    dg("share() が同期的に例外 " + (e.name || "") + " " + (e.message || e));
+    if (isFirstTry){ armSecondTap(file); } else { showSaveDiag(file, "共有シートを開けませんでした。"); }
     return;
   }
 
-  // 複数枚はここでまとめて加工だけ終わらせる。
-  // 完了後に加工済み画像を一覧表示し、各画像を1タップずつ写真へ保存する。
-  showNote(`0/${batch.length} を一括加工中…`);
-  try {
-    const files = [];
-    for (let i=0; i<batch.length; i++){
-      showNote(`${i+1}/${batch.length} を一括加工中…\n${batch[i].name}`);
-      files.push(await exportFileToOutput(batch[i], i));
-    }
-    showExportResults(files);
-  } catch(err){
-    showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
+  p.then(() => {
+    dg("share 成功");
+    hideNote();
+    setSaveLabel("写真に保存");
+  }).catch(e => {
+    if (e && e.name === "AbortError"){ hideNote(); setSaveLabel("写真に保存"); return; }
+    dg("share 失敗 " + (e.name || "") + " " + (e.message || e));
+    if (isFirstTry){ armSecondTap(file); } else { showSaveDiag(file, "共有シートを開けませんでした。"); }
+  });
+}
+
+/* 加工は終わっているので、次のタップは await ゼロで share() に入れる */
+function armSecondTap(file){
+  setSaveLabel("もう一度タップで保存");
+  showNote("加工は終わりました。\n\niOS が保存を一度止めたので、\nもう一度「もう一度タップで保存」を押してください。\n2回目は確実に共有シートが開きます。");
+}
+
+saveBtn().onclick = async () => {
+  const key = exportKey();
+
+  // 準備済みなら await を一切挟まずそのまま共有シートへ
+  if (preparedExport && preparedExport.key === key){
+    dg("準備済みを同期で共有");
+    shareNow(preparedExport.file, false);
+    return;
   }
+
+  saveDiag = [];
+  revokeExportResultURLs();
+  preparedExport = null;
+  hideNote();
+
+  const btn = saveBtn();
+  btn.disabled = true;
+  setSaveLabel("加工中…");
+  const t0 = Date.now();
+
+  let f;
+  try {
+    f = await exportCurrentViewFile();
+  } catch(err){
+    btn.disabled = false;
+    setSaveLabel("写真に保存");
+    showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
+    return;
+  }
+  btn.disabled = false;
+  setSaveLabel("写真に保存");
+
+  dg("加工 " + ((Date.now()-t0)/1000).toFixed(1) + "秒");
+  preparedExport = {key, file:f};
+  shareNow(f, true);
 };
 
 /* ---------- 画像読み込み ---------- */
@@ -1412,9 +1464,20 @@ async function loadUser(file){
   S.previewScale = k;
   S.w = Math.round(iw*k); S.h = Math.round(ih*k);
 
+  // 原寸キャンバスは書き出しの元になる。iOS ではここで上限を掛けておかないと
+  // 読み込んだ時点でメモリを食い尽くす
+  const cap = exportAreaCap();
+  let bw = iw, bh = ih;
+  if (cap && bw*bh > cap){
+    const kk = Math.sqrt(cap/(bw*bh));
+    bw = Math.max(1, Math.round(bw*kk)); bh = Math.max(1, Math.round(bh*kk));
+  }
+  releaseCanvas(fullBaseCanvas);
   fullBaseCanvas = document.createElement("canvas");
-  fullBaseCanvas.width = iw; fullBaseCanvas.height = ih;
-  fullBaseCanvas.getContext("2d").drawImage(img, 0, 0);
+  fullBaseCanvas.width = bw; fullBaseCanvas.height = bh;
+  fullBaseCanvas.getContext("2d").drawImage(img, 0, 0, bw, bh);
+  S.fullW = bw;
+  S.previewScale = S.w / bw;   // 粒径は原寸基準なので、上限を掛けた後の幅に合わせる
 
   cv.width = S.w; cv.height = S.h;
   ctx.drawImage(img, 0, 0, S.w, S.h);
