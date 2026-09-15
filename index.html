@@ -35,6 +35,7 @@
     padding:9px 14px;background:#232323;border-bottom:1px solid #1b1b1b
   }
   header .brand{font-size:13px;font-weight:600;white-space:nowrap}
+  header .brand #ver{color:var(--mark);font-weight:400;font-size:11px;margin-left:4px}
   header .acts{display:flex;gap:6px}
   header button{padding:7px 13px}
   .body{flex:1;display:flex;min-height:0}
@@ -171,7 +172,7 @@
 <body>
 
 <header>
-  <div class="brand">グレイン合わせ台</div>
+  <div class="brand">グレイン合わせ台 <span id="ver">v—</span></div>
   <div class="acts">
     <button id="b-open">写真を開く</button>
     <button id="b-save">写真に保存</button>
@@ -377,6 +378,16 @@ function showNoteHTML(html){ note.innerHTML = html; note.classList.add("show"); 
 function hideNote(){ note.classList.remove("show"); }
 window.addEventListener("error", e => showNote("エラー\n" + (e.message || e)));
 
+
+/* ---------- 版 ----------
+   どの index.html が動いているかを画面から判別するための印。
+   差し替えるたびにここの数字を上げる */
+const BUILD = "2026-09-15 e";
+(function(){
+  const v = document.getElementById("ver");
+  if (v) v.textContent = BUILD;
+})();
+
 /* ---------- 曲線LUT ---------- */
 let LUT = new Float32Array(256);
 function buildLUT(){
@@ -570,7 +581,7 @@ function grainPxWork(){
   return Math.max(GRAIN_FLOOR, grainPxFull() * S.previewScale) + 0.013;
 }
 
-const BAND_BUDGET = 4e6;   // 一度に確保するノイズの上限画素数
+const BAND_BUDGET = 1e6;   // ノイズ格子の上限。4e6だと格子だけで60MB超になる
 function getNoise(w, h, s, yOff){
   const cl = S.clump;
   const key = w+"x"+h+"@"+s.toFixed(3)+"+"+yOff+"c"+cl.toFixed(3);
@@ -586,8 +597,10 @@ function getNoise(w, h, s, yOff){
 }
 
 /* ---------- 本体 ---------- */
-function apply(srcPix, w, h, sizePx, splitPx, realSrc){
-  const out = new Uint8ClampedArray(srcPix.length);
+/* dst を渡すとそこに書く。srcPix と同一でもよい（同じ添字しか読まないので安全）。
+   これで原寸1枚分のバッファが丸ごと1枚浮く */
+function apply(srcPix, w, h, sizePx, splitPx, realSrc, dst){
+  const out = dst || new Uint8ClampedArray(srcPix.length);
   // ノイズ格子のセル数は帯の画素数 / sizePx^2 で増える。
   // 粒を細かくすると格子が画像より大きくなるので、帯の高さを sizePx^2 で絞って
   // 格子の総セル数を一定に保つ
@@ -967,7 +980,9 @@ function setFmt(f){
     : "JPEG 品質96で書き出します。軽い代わりに、色差が間引かれて粒の色がやや潰れます。";
 }
 if (fmtBtn) fmtBtn.onclick = () => setFmt(S.fmt === "png" ? "jpeg" : "png");
-setFmt("png");
+// 粒は圧縮が効かないので、PNG は出力も encoder の作業領域も最大になる。
+// iOS はそこで落ちるので JPEG を初期値にする（PNG にも手動で切り替えられる）
+setFmt(isIOSDevice() ? "jpeg" : "png");
 
 document.getElementById("b-reset").onclick = () => {
   const d = {"s-amt":100,"s-follow":100,"s-dust":0,"s-dustsz":1
@@ -1077,7 +1092,7 @@ function releaseCanvas(c){
 /* iOS Safari はキャンバス面積とプロセスメモリの両方に上限がある。
    原寸で試してから落とす作りだと、失敗ではなくタブごと落ちて戻ってこない。
    だから最初から上限を掛ける。数値を上げると大きく書き出せるが落ちやすくなる */
-const IOS_EXPORT_AREA = 16.7e6;
+const IOS_EXPORT_AREA = 8e6;   // 約3460x2300。iPhoneで写真に残すには十分で、ここが落ちない上限
 function exportAreaCap(){
   return isIOSDevice() ? IOS_EXPORT_AREA : null;
 }
@@ -1091,38 +1106,42 @@ function buildExportFromCanvas(sourceCanvas, maxArea){
     w = Math.max(1, Math.round(w*k)); h = Math.max(1, Math.round(h*k));
   }
 
-  const c0 = document.createElement("canvas");
-  c0.width = w; c0.height = h;
-  const x0 = c0.getContext("2d");
-  x0.drawImage(sourceCanvas, 0, 0, w, h);
-  if (!canvasAlive(c0)){ releaseCanvas(c0); return null; }
-  let data = x0.getImageData(0,0,w,h).data;
-  releaseCanvas(c0);   // 画素は data に移ったのでキャンバスの裏バッファを先に返す
+  // 縮小が要らないなら c0 を作らず元キャンバスから直接読む（原寸1枚分が浮く）
+  let data;
+  if (w === sourceCanvas.width && h === sourceCanvas.height){
+    if (!canvasAlive(sourceCanvas)) return null;
+    data = sourceCanvas.getContext("2d").getImageData(0,0,w,h).data;
+  } else {
+    const c0 = document.createElement("canvas");
+    c0.width = w; c0.height = h;
+    const x0 = c0.getContext("2d");
+    x0.drawImage(sourceCanvas, 0, 0, w, h);
+    if (!canvasAlive(c0)){ releaseCanvas(c0); return null; }
+    data = x0.getImageData(0,0,w,h).data;
+    releaseCanvas(c0);
+  }
 
   const keepPs = S.previewScale, keepView = S.view, keepFullW = S.fullW;
-  let px;
   try {
     S.previewScale = 1;
     S.fullW = fullW0;
     if (S.view === "split") S.view = "single";
     noiseCache = {key:"", f:null};
     const gp = Math.max(GRAIN_FLOOR, grainPxFull() * (w/fullW0)) + 0.013;
-    px = apply(data, w, h, gp, -1, null);
+    apply(data, w, h, gp, -1, null, data);   // data の上に直接書く
   } finally {
     S.previewScale = keepPs;
     S.view = keepView;
     S.fullW = keepFullW;
     noiseCache = {key:"", f:null};
   }
-  data = null;   // apply が済めば元画素は不要
 
   const c2 = document.createElement("canvas");
   c2.width = w; c2.height = h;
   const x2 = c2.getContext("2d");
-  // createImageData + set は原寸1枚分を丸ごと余計に取る。px をそのまま包む
   let im;
-  try { im = new ImageData(px, w, h); }
-  catch(_){ im = x2.createImageData(w, h); im.data.set(px); }
+  try { im = new ImageData(data, w, h); }
+  catch(_){ im = x2.createImageData(w, h); im.data.set(data); }
   x2.putImageData(im, 0, 0);
   return c2;
 }
