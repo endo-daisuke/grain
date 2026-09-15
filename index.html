@@ -212,6 +212,12 @@
     <div class="ctl">
       <div class="row"><label for="s-clump">粒のまとまり</label><span class="val num" id="v-clump">100%</span></div>
       <input type="range" id="s-clump" min="0" max="100" value="100" step="1">
+
+      <div class="row"><label for="s-spread">粒のばらつき</label><span class="val num" id="v-spread">55%</span></div>
+      <input type="range" id="s-spread" min="0" max="100" value="55" step="1">
+
+      <div class="row"><label for="s-bite">境目の食い込み</label><span class="val num" id="v-bite">35%</span></div>
+      <input type="range" id="s-bite" min="0" max="100" value="35" step="1">
     </div>
     <div class="ctl">
       <div class="row"><label for="s-chroma">色の独立度</label><span class="val num" id="v-chroma">40%</span></div>
@@ -382,7 +388,7 @@ window.addEventListener("error", e => showNote("エラー\n" + (e.message || e))
 /* ---------- 版 ----------
    どの index.html が動いているかを画面から判別するための印。
    差し替えるたびにここの数字を上げる */
-const BUILD = "2026-09-15 e";
+const BUILD = "2026-09-15 g";
 (function(){
   const v = document.getElementById("ver");
   if (v) v.textContent = BUILD;
@@ -554,6 +560,7 @@ const S = {
   amount:1, size:1.19, chroma:.40, follow:1,
   clump:1, wR:1, wG:1, wB:1, perChannel:false, preset:'minilab',
   dust:0, dustSize:1, fmt:'png',
+  spread:.55, bite:.35,
   autoScale:false, view:"split", zoom:1, panX:0, panY:0, split:.5,
   hasReal:true, w:0, h:0, previewScale:1, fullW:0
 };
@@ -582,15 +589,47 @@ function grainPxWork(){
 }
 
 const BAND_BUDGET = 1e6;   // ノイズ格子の上限。4e6だと格子だけで60MB超になる
+const OCT_COARSE = 2.2;
+/* acc*m + co*wA の分散。m=1+mA*(|co|-0.7979) で co は分散1。
+   E[m^2] = 1 + mA^2*Var(|N|) = 1 + mA^2*(1-0.7979^2) を使う */
+function SPREAD_NORM(sp){
+  const wA = sp*0.75, mA = sp*0.90;
+  const varM = 1 + mA*mA*(1 - 0.7979*0.7979);
+  return 1/Math.sqrt(varM + wA*wA);
+}
+
+/* 粒径のばらつき。実フィルムは結晶サイズに分布があるので、
+   細かい・基準・粗いの3層を重ねる。単一格子だと「同じ粒が整列している」
+   質感になり、これが規則的に見える原因になる。
+   合成後も分散が1になるよう重みを正規化する */
+function spreadField(w, h, s, seed, yOff, clump, sp){
+  if (sp <= 0.001) return noiseField(w, h, s, seed, yOff, clump);
+  // 粗い層を1枚だけ作り、(1) 足し込む (2) その絶対値で基準層の振幅を揺らす。
+  // (2) が「塊の濃淡」を作る。細かい層を足す方式は帯を刻む必要があって
+  // 4倍以上重くなるので使わない
+  const co = noiseField(w, h, s*OCT_COARSE, seed+1013, yOff, clump);
+  const acc = noiseField(w, h, s, seed, yOff, clump);
+  const wA = sp*0.75, mA = sp*0.90;
+  const norm = SPREAD_NORM(sp);
+  for (let i=0;i<acc.length;i++){
+    const m = 1 + mA*(Math.abs(co[i]) - 0.7979);   // |N(0,1)| の平均は 0.7979
+    acc[i] = (acc[i]*m + co[i]*wA) * norm;
+  }
+  return acc;
+}
+
 function getNoise(w, h, s, yOff){
-  const cl = S.clump;
-  const key = w+"x"+h+"@"+s.toFixed(3)+"+"+yOff+"c"+cl.toFixed(3);
+  const cl = S.clump, sp = S.spread, bt = S.bite;
+  const key = w+"x"+h+"@"+s.toFixed(3)+"+"+yOff+"c"+cl.toFixed(3)
+            + "s"+sp.toFixed(3)+"b"+(bt>0.001?"1":"0");
   if (noiseCache.key === key) return noiseCache.f;
   const f = {
-    m: noiseField(w,h,s,11,yOff,cl),
-    r: noiseField(w,h,s,23,yOff,cl),
-    g: noiseField(w,h,s,47,yOff,cl),
-    b: noiseField(w,h,s,71,yOff,cl)
+    m: spreadField(w,h,s,11,yOff,cl,sp),
+    r: spreadField(w,h,s,23,yOff,cl,sp),
+    g: spreadField(w,h,s,47,yOff,cl,sp),
+    b: spreadField(w,h,s,71,yOff,cl,sp),
+    dx: bt>0.001 ? noiseField(w,h,s,131,yOff,cl) : null,
+    dy: bt>0.001 ? noiseField(w,h,s,197,yOff,cl) : null
   };
   noiseCache = {key, f};
   return f;
@@ -601,24 +640,49 @@ function getNoise(w, h, s, yOff){
    これで原寸1枚分のバッファが丸ごと1枚浮く */
 function apply(srcPix, w, h, sizePx, splitPx, realSrc, dst){
   const out = dst || new Uint8ClampedArray(srcPix.length);
-  // ノイズ格子のセル数は帯の画素数 / sizePx^2 で増える。
-  // 粒を細かくすると格子が画像より大きくなるので、帯の高さを sizePx^2 で絞って
-  // 格子の総セル数を一定に保つ
+
   const bandPx = Math.min(BAND_BUDGET, Math.max(1, BAND_BUDGET * sizePx * sizePx));
   const bandH = Math.max(1, Math.min(h, Math.floor(bandPx / w)));
+
   const t = S.chroma;                    // 0=3色共通の粒  1=完全に独立
   const a0 = Math.sqrt(1-t*t), a1 = t;   // これで合成後も分散1のまま
   const wR = S.wR, wG = S.wG, wB = S.wB;
   const base = S.amount * (PEAK_SIGMA/255) * 255;   // 8bit空間で扱う
   const flat = 1 - S.follow;
   const grainOnly = S.view === "grain";
-
   const perCh = S.perChannel;
+
+  // 参照位置のずらし量。粒1個ぶん前後まで動かすと
+  // 平坦部は変わらないまま境目だけが粒の形に刻まれる
+  const dAmp = S.bite > 0.001 ? sizePx * S.bite * 1.4 : 0;
+
+  // in-place のときは上の行が既に書き換わっているので
+  // 参照用に帯ぶんだけ原本を持つ（帯は1e6画素までなので数MB）
+  const aliased = (out === srcPix);
+  const mg = dAmp > 0 ? Math.ceil(dAmp)+1 : 0;
+  let bandSrc = null, prevTail = null;
+  if (dAmp > 0 && aliased) bandSrc = new Uint8ClampedArray((bandH + 2*mg) * w * 4);
 
   for (let y0=0; y0<h; y0+=bandH){
   const bh = Math.min(bandH, h-y0);
   const N = getNoise(w, bh, sizePx, y0);
   const D = S.dust > 0 ? getDust(w, bh, y0) : null;
+
+  let SRC = srcPix, srcTop = 0, srcBot = h;
+  if (bandSrc){
+    const top = Math.max(0, y0-mg), bot = Math.min(h, y0+bh+mg);
+    if (y0 > top){
+      const head = (y0-top)*w*4;
+      if (prevTail && prevTail.length >= head) bandSrc.set(prevTail.subarray(prevTail.length-head), 0);
+      else bandSrc.set(srcPix.subarray(top*w*4, y0*w*4), 0);
+    }
+    bandSrc.set(srcPix.subarray(y0*w*4, bot*w*4), (y0-top)*w*4);
+    const ts = Math.max(top, y0+bh-mg);
+    prevTail = bandSrc.slice((ts-top)*w*4, (Math.min(bot, y0+bh)-top)*w*4);
+    SRC = bandSrc; srcTop = top; srcBot = bot;
+  }
+  const maxY = srcBot - srcTop - 1;
+
   for (let y=y0; y<y0+bh; y++){
     const row = y*w, nrow = (y-y0)*w;
     for (let x=0; x<w; x++){
@@ -629,7 +693,21 @@ function apply(srcPix, w, h, sizePx, splitPx, realSrc, dst){
         continue;
       }
 
-      let r = srcPix[i], g = srcPix[i+1], b = srcPix[i+2];
+      let r, g, b;
+      if (dAmp > 0){
+        let sx = x + N.dx[np]*dAmp;
+        let sy = (y - srcTop) + N.dy[np]*dAmp;
+        if (sx < 0) sx = 0; else if (sx > w-1.001) sx = w-1.001;
+        if (sy < 0) sy = 0; else if (sy > maxY-0.001) sy = maxY-0.001;
+        const xi = sx|0, yi = sy|0, fx = sx-xi, fy = sy-yi;
+        const o00 = (yi*w + xi)*4, o10 = o00+4, o01 = o00+w*4, o11 = o01+4;
+        const gx = 1-fx, gy = 1-fy;
+        r = (SRC[o00]*gx + SRC[o10]*fx)*gy + (SRC[o01]*gx + SRC[o11]*fx)*fy;
+        g = (SRC[o00+1]*gx + SRC[o10+1]*fx)*gy + (SRC[o01+1]*gx + SRC[o11+1]*fx)*fy;
+        b = (SRC[o00+2]*gx + SRC[o10+2]*fx)*gy + (SRC[o01+2]*gx + SRC[o11+2]*fx)*fy;
+      } else {
+        r = srcPix[i]; g = srcPix[i+1]; b = srcPix[i+2];
+      }
 
       const nm = a0*N.m[np];
       const gr = (nm + a1*N.r[np]) * wR;
@@ -923,8 +1001,10 @@ const bChroma = bind("s-chroma","v-chroma", x=>x+"%", x=>S.chroma=x/100);
 const bWR     = bind("s-wr","v-wr", x=>x+"%", x=>S.wR=x/100);
 const bWG     = bind("s-wg","v-wg", x=>x+"%", x=>S.wG=x/100);
 const bWB     = bind("s-wb","v-wb", x=>x+"%", x=>S.wB=x/100);
+const bSpread = bind("s-spread","v-spread", x=>x+"%", x=>S.spread=x/100);
+const bBite   = bind("s-bite","v-bite", x=>x+"%", x=>S.bite=x/100);
 const B = [
-  bAmt, bSize, bClump, bChroma, bWR, bWG, bWB,
+  bAmt, bSize, bClump, bChroma, bWR, bWG, bWB, bSpread, bBite,
   bind("s-follow","v-follow", x=>x+"%", x=>S.follow=x/100),
   bind("s-dust","v-dust", x=>String(x), x=>S.dust=x),
   bind("s-dustsz","v-dustsz", x=>x.toFixed(2), x=>S.dustSize=x)
@@ -997,6 +1077,7 @@ function captureCurrentSettings(){
     preset:S.preset,
     amount:S.amount, size:S.size, clump:S.clump, chroma:S.chroma, follow:S.follow,
     wR:S.wR, wG:S.wG, wB:S.wB, dust:S.dust, dustSize:S.dustSize,
+    spread:S.spread, bite:S.bite,
     autoScale:S.autoScale, fmt:S.fmt
   };
 }
@@ -1032,6 +1113,8 @@ function applySavedSettings(data){
     "s-amt": Math.round((data.amount ?? S.amount) * 100),
     "s-size": data.size ?? S.size,
     "s-clump": Math.round((data.clump ?? S.clump) * 100),
+    "s-spread": Math.round((data.spread ?? S.spread) * 100),
+    "s-bite": Math.round((data.bite ?? S.bite) * 100),
     "s-chroma": Math.round((data.chroma ?? S.chroma) * 100),
     "s-follow": Math.round((data.follow ?? S.follow) * 100),
     "s-wr": Math.round((data.wR ?? S.wR) * 100),
