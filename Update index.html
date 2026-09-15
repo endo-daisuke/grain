@@ -1064,6 +1064,19 @@ function canvasAlive(c){
   } catch(e){ return false; }
 }
 
+/* 幅高を0にすると裏バッファが即返る。GC待ちにしないための決め手 */
+function releaseCanvas(c){
+  try { if (c){ c.width = 0; c.height = 0; } } catch(_){}
+}
+
+/* iOS Safari はキャンバス面積とプロセスメモリの両方に上限がある。
+   原寸で試してから落とす作りだと、失敗ではなくタブごと落ちて戻ってこない。
+   だから最初から上限を掛ける。数値を上げると大きく書き出せるが落ちやすくなる */
+const IOS_EXPORT_AREA = 16.7e6;
+function exportAreaCap(){
+  return isIOSDevice() ? IOS_EXPORT_AREA : null;
+}
+
 /* 原寸のきれいな元データから合成し直す。プレビュー用キャンバスは既に粒が乗っているので使わない */
 function buildExportFromCanvas(sourceCanvas, maxArea){
   const fullW0 = sourceCanvas.width;
@@ -1077,8 +1090,9 @@ function buildExportFromCanvas(sourceCanvas, maxArea){
   c0.width = w; c0.height = h;
   const x0 = c0.getContext("2d");
   x0.drawImage(sourceCanvas, 0, 0, w, h);
-  if (!canvasAlive(c0)) return null;
-  const data = x0.getImageData(0,0,w,h).data;
+  if (!canvasAlive(c0)){ releaseCanvas(c0); return null; }
+  let data = x0.getImageData(0,0,w,h).data;
+  releaseCanvas(c0);   // 画素は data に移ったのでキャンバスの裏バッファを先に返す
 
   const keepPs = S.previewScale, keepView = S.view, keepFullW = S.fullW;
   let px;
@@ -1095,12 +1109,15 @@ function buildExportFromCanvas(sourceCanvas, maxArea){
     S.fullW = keepFullW;
     noiseCache = {key:"", f:null};
   }
+  data = null;   // apply が済めば元画素は不要
 
   const c2 = document.createElement("canvas");
   c2.width = w; c2.height = h;
   const x2 = c2.getContext("2d");
-  const im = x2.createImageData(w, h);
-  im.data.set(px);
+  // createImageData + set は原寸1枚分を丸ごと余計に取る。px をそのまま包む
+  let im;
+  try { im = new ImageData(px, w, h); }
+  catch(_){ im = x2.createImageData(w, h); im.data.set(px); }
   x2.putImageData(im, 0, 0);
   return c2;
 }
@@ -1207,11 +1224,18 @@ function fileToDataURL(file){
   });
 }
 
-/* 長押しの予備画面。blob: だと iOS で「写真に保存」が出ないので data: に変換して渡す */
-function fallbackSavePreview(file){
+/* 長押しの予備画面。blob: だと iOS で「写真に保存」が出ないので data: に変換して渡す。
+   ただし data: は base64 なので原寸の約1.33倍を文字列で抱える。
+   大きい画像でこれをやるとタブごと落ちるので、小さいときだけにする */
+const DATAURL_LIMIT = 6 * 1024 * 1024;
+function fallbackSavePreview(file, blobURL){
+  if (file.size > DATAURL_LIMIT){
+    openSavePreview(file, blobURL || null);
+    return;
+  }
   fileToDataURL(file)
     .then(u => openSavePreview(file, u))
-    .catch(() => openSavePreview(file, null));
+    .catch(() => openSavePreview(file, blobURL || null));
 }
 
 function saveOneExportFile(file, button, imageURL){
@@ -1220,12 +1244,12 @@ function saveOneExportFile(file, button, imageURL){
     try {
       navigator.share({files:[file]}).catch(err => {
         if (err && err.name === "AbortError") return;   // ユーザーがシートを閉じただけ
-        fallbackSavePreview(file);
+        fallbackSavePreview(file, imageURL);
       });
       return;
     } catch(_){ /* 同期的に落ちた場合は下へ */ }
   }
-  fallbackSavePreview(file);
+  fallbackSavePreview(file, imageURL);
 }
 
 function showExportResults(files){
@@ -1290,29 +1314,55 @@ async function deliverFiles(files){
 }
 
 async function exportCurrentViewFile(){
-  let c2 = buildExport(null);
-  if (!c2) c2 = buildExport(16.7e6);
+  let c2 = buildExport(exportAreaCap());
+  if (!c2) c2 = buildExport(8e6);
   if (!c2) c2 = buildExport(4e6);
   if (!c2) throw new Error("書き出し用のキャンバスを確保できませんでした。");
-  return await canvasToExportFile(c2, exportNameFor(userFiles[currentFileIndex]?.name || ("grain_" + Date.now()), Math.max(0, currentFileIndex)));
+  try {
+    return await canvasToExportFile(c2, exportNameFor(userFiles[currentFileIndex]?.name || ("grain_" + Date.now()), Math.max(0, currentFileIndex)));
+  } finally {
+    releaseCanvas(c2);
+  }
 }
 
 async function exportFileToOutput(file, idx){
   const r = await decodeFile(file);
   const img = r.img;
   const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
-  if (!iw || !ih) throw new Error(file.name + " の寸法が取得できませんでした");
+  if (!iw || !ih){
+    if (img.close) img.close();
+    throw new Error(file.name + " の寸法が取得できませんでした");
+  }
+
+  // 26MPの元データを一度そのままキャンバスに載せると、その時点で落ちる。
+  // 取り込みの段階で上限まで縮める
+  const cap = exportAreaCap();
+  let sw = iw, sh = ih;
+  if (cap && sw*sh > cap){
+    const k = Math.sqrt(cap/(sw*sh));
+    sw = Math.max(1, Math.round(sw*k)); sh = Math.max(1, Math.round(sh*k));
+  }
 
   const src = document.createElement("canvas");
-  src.width = iw; src.height = ih;
-  src.getContext("2d").drawImage(img, 0, 0);
+  src.width = sw; src.height = sh;
+  src.getContext("2d").drawImage(img, 0, 0, sw, sh);
+  if (img.close) img.close();   // ImageBitmap は明示的に閉じないと残る
 
-  let c2 = buildExportFromCanvas(src, null);
-  if (!c2) c2 = buildExportFromCanvas(src, 16.7e6);
-  if (!c2) c2 = buildExportFromCanvas(src, 4e6);
+  let c2 = null;
+  try {
+    c2 = buildExportFromCanvas(src, null);
+    if (!c2) c2 = buildExportFromCanvas(src, 8e6);
+    if (!c2) c2 = buildExportFromCanvas(src, 4e6);
+  } finally {
+    releaseCanvas(src);
+  }
   if (!c2) throw new Error(file.name + " の書き出し用キャンバスを確保できませんでした。");
 
-  return await canvasToExportFile(c2, exportNameFor(file.name, idx));
+  try {
+    return await canvasToExportFile(c2, exportNameFor(file.name, idx));
+  } finally {
+    releaseCanvas(c2);
+  }
 }
 
 document.getElementById("b-save").onclick = async () => {
