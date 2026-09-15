@@ -174,7 +174,7 @@
   <div class="brand">グレイン合わせ台</div>
   <div class="acts">
     <button id="b-open">写真を開く</button>
-    <button id="b-save">書き出す</button>
+    <button id="b-save">写真に保存</button>
     <button id="b-fmt" title="書き出し形式を切り替え">PNG</button>
     <button id="b-reset">実測値に戻す</button>
   </div>
@@ -202,7 +202,7 @@
     </div>
     <div class="ctl">
       <div class="row"><label for="s-size">粒径</label><span class="val num" id="v-size">1.19</span></div>
-      <input type="range" id="s-size" min="0.6" max="5" value="1.19" step="0.01">
+      <input type="range" id="s-size" min="0.2" max="5" value="1.19" step="0.01">
       <label class="check" style="margin-top:6px">
         <input type="checkbox" id="c-scale">
         粒径を画像の横幅で換算する
@@ -565,8 +565,9 @@ const USER_PRESET_KEY = "grain_user_presets_v1";
 function grainPxFull(){
   return S.autoScale ? S.size * (S.fullW / REF_WIDTH) : S.size;
 }
+const GRAIN_FLOOR = 0.20;   // これ以下はピクセルより細かく、見た目が変わらない
 function grainPxWork(){
-  return Math.max(0.35, grainPxFull() * S.previewScale) + 0.013;
+  return Math.max(GRAIN_FLOOR, grainPxFull() * S.previewScale) + 0.013;
 }
 
 const BAND_BUDGET = 4e6;   // 一度に確保するノイズの上限画素数
@@ -587,7 +588,11 @@ function getNoise(w, h, s, yOff){
 /* ---------- 本体 ---------- */
 function apply(srcPix, w, h, sizePx, splitPx, realSrc){
   const out = new Uint8ClampedArray(srcPix.length);
-  const bandH = Math.max(1, Math.min(h, Math.floor(BAND_BUDGET / w)));
+  // ノイズ格子のセル数は帯の画素数 / sizePx^2 で増える。
+  // 粒を細かくすると格子が画像より大きくなるので、帯の高さを sizePx^2 で絞って
+  // 格子の総セル数を一定に保つ
+  const bandPx = Math.min(BAND_BUDGET, Math.max(1, BAND_BUDGET * sizePx * sizePx));
+  const bandH = Math.max(1, Math.min(h, Math.floor(bandPx / w)));
   const t = S.chroma;                    // 0=3色共通の粒  1=完全に独立
   const a0 = Math.sqrt(1-t*t), a1 = t;   // これで合成後も分散1のまま
   const wR = S.wR, wG = S.wG, wB = S.wB;
@@ -671,7 +676,7 @@ function isIOSDevice(){
 function updateSaveButtonLabel(){
   const btn = document.getElementById("b-save");
   if (!btn) return;
-  btn.textContent = userFiles.length > 1 ? `${userFiles.length}枚を書き出す` : "書き出す";
+  btn.textContent = "写真に保存";
 }
 function revokeThumbs(){
   thumbURLs.forEach(u => URL.revokeObjectURL(u));
@@ -1101,7 +1106,7 @@ function buildExportFromCanvas(sourceCanvas, maxArea){
     S.fullW = fullW0;
     if (S.view === "split") S.view = "single";
     noiseCache = {key:"", f:null};
-    const gp = Math.max(0.35, grainPxFull() * (w/fullW0)) + 0.013;
+    const gp = Math.max(GRAIN_FLOOR, grainPxFull() * (w/fullW0)) + 0.013;
     px = apply(data, w, h, gp, -1, null);
   } finally {
     S.previewScale = keepPs;
@@ -1252,7 +1257,8 @@ function saveOneExportFile(file, button, imageURL){
   fallbackSavePreview(file, imageURL);
 }
 
-function showExportResults(files){
+/* 共有シートが自動で開けなかったときだけ出す。押し直せば新しい操作として通る */
+function showRetrySave(file){
   revokeExportResultURLs();
 
   const wrap = document.createElement("div");
@@ -1260,37 +1266,35 @@ function showExportResults(files){
 
   const head = document.createElement("div");
   head.className = "export-gallery-head";
-  head.textContent = `${files.length}枚の加工が完了しました`;
+  head.textContent = "加工が完了しました";
   const sub = document.createElement("div");
   sub.className = "export-gallery-sub";
-  sub.textContent = "各画像の「写真に保存」から共有シートを開き、「画像を保存」を選んでください。";
+  sub.textContent = "下のボタンで共有シートを開き、「画像を保存」を選んでください。";
   wrap.append(head, sub);
 
-  files.forEach((file, idx) => {
-    const row = document.createElement("div");
-    row.className = "export-item";
+  const row = document.createElement("div");
+  row.className = "export-item";
 
-    const img = document.createElement("img");
-    const url = URL.createObjectURL(file);
-    exportResultURLs.push(url);
-    img.src = url;
-    img.alt = `${idx+1}枚目の加工済み画像`;
+  const img = document.createElement("img");
+  const url = URL.createObjectURL(file);
+  exportResultURLs.push(url);
+  img.src = url;
+  img.alt = "加工済み画像";
 
-    const meta = document.createElement("div");
-    meta.className = "meta";
-    const name = document.createElement("div");
-    name.className = "file-name";
-    name.textContent = `${idx+1}. ${file.name}`;
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "save-one";
-    btn.textContent = "写真に保存";
-    btn.onclick = () => saveOneExportFile(file, btn, url);
+  const meta = document.createElement("div");
+  meta.className = "meta";
+  const name = document.createElement("div");
+  name.className = "file-name";
+  name.textContent = file.name;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "save-one";
+  btn.textContent = "写真に保存";
+  btn.onclick = () => saveOneExportFile(file, btn, url);
 
-    meta.append(name, btn);
-    row.append(img, meta);
-    wrap.appendChild(row);
-  });
+  meta.append(name, btn);
+  row.append(img, meta);
+  wrap.appendChild(row);
 
   const close = document.createElement("button");
   close.type = "button";
@@ -1308,11 +1312,6 @@ function showExportResults(files){
   note.classList.add("show");
 }
 
-async function deliverFiles(files){
-  if (!files || !files.length) throw new Error("保存する画像がありませんでした");
-  showExportResults(files);
-}
-
 async function exportCurrentViewFile(){
   let c2 = buildExport(exportAreaCap());
   if (!c2) c2 = buildExport(8e6);
@@ -1325,76 +1324,31 @@ async function exportCurrentViewFile(){
   }
 }
 
-async function exportFileToOutput(file, idx){
-  const r = await decodeFile(file);
-  const img = r.img;
-  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
-  if (!iw || !ih){
-    if (img.close) img.close();
-    throw new Error(file.name + " の寸法が取得できませんでした");
-  }
-
-  // 26MPの元データを一度そのままキャンバスに載せると、その時点で落ちる。
-  // 取り込みの段階で上限まで縮める
-  const cap = exportAreaCap();
-  let sw = iw, sh = ih;
-  if (cap && sw*sh > cap){
-    const k = Math.sqrt(cap/(sw*sh));
-    sw = Math.max(1, Math.round(sw*k)); sh = Math.max(1, Math.round(sh*k));
-  }
-
-  const src = document.createElement("canvas");
-  src.width = sw; src.height = sh;
-  src.getContext("2d").drawImage(img, 0, 0, sw, sh);
-  if (img.close) img.close();   // ImageBitmap は明示的に閉じないと残る
-
-  let c2 = null;
-  try {
-    c2 = buildExportFromCanvas(src, null);
-    if (!c2) c2 = buildExportFromCanvas(src, 8e6);
-    if (!c2) c2 = buildExportFromCanvas(src, 4e6);
-  } finally {
-    releaseCanvas(src);
-  }
-  if (!c2) throw new Error(file.name + " の書き出し用キャンバスを確保できませんでした。");
-
-  try {
-    return await canvasToExportFile(c2, exportNameFor(file.name, idx));
-  } finally {
-    releaseCanvas(c2);
-  }
-}
-
+/* 今表示している1枚だけを書き出して、そのまま共有シートを開く。
+   WebKit のユーザー操作の有効期間は約5秒。加工がそれに収まれば
+   await を挟んでも share() は通る。溢れたら保存ボタンを出して押し直してもらう */
 document.getElementById("b-save").onclick = async () => {
-  const batch = userFiles.length ? userFiles.slice() : [];
   revokeExportResultURLs();
+  hideNote();
 
-  // 1枚は従来通り、書き出し後すぐ保存を開く。
-  if (batch.length <= 1){
-    if (!isIOSDevice()) showNote("書き出し中…");
-    else hideNote();
-    try {
-      const f = batch.length === 1 ? await exportFileToOutput(batch[0], 0) : await exportCurrentViewFile();
-      await deliverFiles([f]);
-    } catch(err){
-      showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
-    }
+  let f;
+  try {
+    f = await exportCurrentViewFile();
+  } catch(err){
+    showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
     return;
   }
 
-  // 複数枚はここでまとめて加工だけ終わらせる。
-  // 完了後に加工済み画像を一覧表示し、各画像を1タップずつ写真へ保存する。
-  showNote(`0/${batch.length} を一括加工中…`);
-  try {
-    const files = [];
-    for (let i=0; i<batch.length; i++){
-      showNote(`${i+1}/${batch.length} を一括加工中…\n${batch[i].name}`);
-      files.push(await exportFileToOutput(batch[i], i));
-    }
-    showExportResults(files);
-  } catch(err){
-    showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
+  if (canShareFiles([f])){
+    try {
+      navigator.share({files:[f]}).then(hideNote).catch(err => {
+        if (err && err.name === "AbortError"){ hideNote(); return; }
+        showRetrySave(f);   // 操作の有効期間切れなど
+      });
+      return;
+    } catch(_){}
   }
+  showRetrySave(f);
 };
 
 /* ---------- 画像読み込み ---------- */
@@ -1481,9 +1435,20 @@ async function loadUser(file){
   S.previewScale = k;
   S.w = Math.round(iw*k); S.h = Math.round(ih*k);
 
+  // 原寸キャンバスは書き出しの元になる。iOS ではここで上限を掛けておかないと
+  // 読み込んだ時点でメモリを食い尽くす
+  const cap = exportAreaCap();
+  let bw = iw, bh = ih;
+  if (cap && bw*bh > cap){
+    const kk = Math.sqrt(cap/(bw*bh));
+    bw = Math.max(1, Math.round(bw*kk)); bh = Math.max(1, Math.round(bh*kk));
+  }
+  releaseCanvas(fullBaseCanvas);
   fullBaseCanvas = document.createElement("canvas");
-  fullBaseCanvas.width = iw; fullBaseCanvas.height = ih;
-  fullBaseCanvas.getContext("2d").drawImage(img, 0, 0);
+  fullBaseCanvas.width = bw; fullBaseCanvas.height = bh;
+  fullBaseCanvas.getContext("2d").drawImage(img, 0, 0, bw, bh);
+  S.fullW = bw;
+  S.previewScale = S.w / bw;   // 粒径は原寸基準なので、上限を掛けた後の幅に合わせる
 
   cv.width = S.w; cv.height = S.h;
   ctx.drawImage(img, 0, 0, S.w, S.h);
