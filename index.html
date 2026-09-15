@@ -6,6 +6,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="グレイン">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" type="image/png" href="icon.png">
 <meta name="theme-color" content="#232323">
 <title>グレイン合わせ台</title>
 <style>
@@ -891,8 +893,13 @@ async function deliver(c2, sizeNote){
   const name = "grain_" + Date.now() + (png ? ".png" : ".jpg");
   const blob = await new Promise(r => { try { c2.toBlob(r, mime, q); } catch(e){ r(null); } });
 
-  // 枠の外で開いていれば、押した時点でそのまま端末に落ちる
-  if (!inFrame && blob && tryDownload(blob, name)){
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  // iPhone / iPad では通常ダウンロードを先に走らせず、
+  // 下の Web Share API を優先して共有シートから「画像を保存」できるようにする
+  // PCなどでは今まで通り直接ダウンロード
+  if (!isIOS && !inFrame && blob && tryDownload(blob, name)){
     hideNote(); render(); return;
   }
 
@@ -904,7 +911,7 @@ async function deliver(c2, sizeNote){
     "書き出しました。" + c2.width + "×" + c2.height + "px、" + (png ? "PNG" : "JPEG") + "。" + (sizeNote || "") +
     '<img id="n-img" src="' + dispUrl + '" alt="書き出した画像">' +
     '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-      '<button id="n-save">デバイスに保存</button>' +
+      '<button id="n-save">' + (isIOS ? '写真に保存' : 'デバイスに保存') + '</button>' +
       (big ? '<button id="n-full">原寸で表示</button>' : '') +
       '<button id="n-close">閉じる</button></div>' +
     '<p class="caption">保存されないときは上の画像を長押し（右クリック）してください。' +
@@ -941,7 +948,7 @@ async function deliver(c2, sizeNote){
         await w.write(blob); await w.close();
         ok = true;
       } catch(e){
-        if (e && e.name === "AbortError"){ save.disabled = false; save.textContent = "デバイスに保存"; return; }
+        if (e && e.name === "AbortError"){ save.disabled = false; save.textContent = isIOS ? "写真に保存" : "デバイスに保存"; return; }
       }
     }
     // 2) 共有シート（iPhone / Android）。ここから写真アプリに保存できる
@@ -955,7 +962,7 @@ async function deliver(c2, sizeNote){
     if (!ok) ok = tryDownload(blob, name, inFrame);
 
     save.disabled = false;
-    save.textContent = ok ? "保存しました" : "保存できませんでした";
+    save.textContent = ok ? (isIOS ? "共有シートを開きました" : "保存しました") : "保存できませんでした";
   };
 }
 
