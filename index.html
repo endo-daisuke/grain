@@ -85,6 +85,15 @@
   .thumb .meta{min-width:0;display:flex;flex-direction:column;gap:2px}
   .thumb .idx{font-size:10px;color:var(--mark)}
   .thumb .name{font-size:11px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .export-gallery{display:flex;flex-direction:column;gap:10px;min-width:min(76vw,420px)}
+  .export-gallery-head{font-size:14px;font-weight:600;margin-bottom:2px}
+  .export-gallery-sub{font-size:11px;color:var(--ink-dim);margin-bottom:4px}
+  .export-item{display:grid;grid-template-columns:76px minmax(0,1fr);gap:10px;align-items:center;padding:8px;border:1px solid var(--line);background:#252525}
+  .export-item img{width:76px;height:76px;object-fit:cover;display:block;margin:0;border:none;background:#111}
+  .export-item .meta{min-width:0}
+  .export-item .file-name{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:7px}
+  .export-item .save-one{width:100%;background:var(--mark);border-color:var(--mark);color:#221a0e;font-weight:600}
+  .export-gallery-close{width:100%;margin-top:2px}
 
   main{flex:1;position:relative;overflow:hidden;background:var(--surround);touch-action:none}
   #stage{position:absolute;top:0;left:0;transform-origin:0 0;touch-action:none}
@@ -171,43 +180,13 @@
     <p>実測したフィルムスキャンから校正</p>
   </div>
 
-
   <section>
-    <h2>マイプリセット</h2>
-    <div class="preset-list">
-      <div class="preset-row">
-        <div class="meta">
-          <div class="name">プリセット 1</div>
-          <div class="sub" id="user-preset-meta-1">未保存</div>
-        </div>
-        <div class="btns">
-          <button id="user-preset-load-1">適用</button>
-          <button id="user-preset-save-1">保存</button>
-        </div>
-      </div>
-      <div class="preset-row">
-        <div class="meta">
-          <div class="name">プリセット 2</div>
-          <div class="sub" id="user-preset-meta-2">未保存</div>
-        </div>
-        <div class="btns">
-          <button id="user-preset-load-2">適用</button>
-          <button id="user-preset-save-2">保存</button>
-        </div>
-      </div>
-      <div class="preset-row">
-        <div class="meta">
-          <div class="name">プリセット 3</div>
-          <div class="sub" id="user-preset-meta-3">未保存</div>
-        </div>
-        <div class="btns">
-          <button id="user-preset-load-3">適用</button>
-          <button id="user-preset-save-3">保存</button>
-        </div>
-      </div>
-    </div>
-    <p class="caption">現在の調整値を保存して、複数画像への一括適用にすぐ再利用できます。</p>
+    <input type="file" id="file" accept="image/*" hidden multiple>
+    <p class="caption" id="queue-meta">最大5枚まで選択できます。現在の設定は選択した画像すべてに一括適用されます。</p>
+    <div class="thumb-strip" id="thumb-strip"></div>
+    <p class="caption" id="status">読み込み中…</p>
   </section>
+
 
   <section>
     <h2>グレイン</h2>
@@ -269,6 +248,43 @@
     大きさは対数正規、まれに引っかき傷が混じります。</p>
   </section>
 
+  <section>
+    <h2>マイプリセット</h2>
+    <div class="preset-list">
+      <div class="preset-row">
+        <div class="meta">
+          <div class="name">プリセット 1</div>
+          <div class="sub" id="user-preset-meta-1">未保存</div>
+        </div>
+        <div class="btns">
+          <button id="user-preset-load-1">適用</button>
+          <button id="user-preset-save-1">保存</button>
+        </div>
+      </div>
+      <div class="preset-row">
+        <div class="meta">
+          <div class="name">プリセット 2</div>
+          <div class="sub" id="user-preset-meta-2">未保存</div>
+        </div>
+        <div class="btns">
+          <button id="user-preset-load-2">適用</button>
+          <button id="user-preset-save-2">保存</button>
+        </div>
+      </div>
+      <div class="preset-row">
+        <div class="meta">
+          <div class="name">プリセット 3</div>
+          <div class="sub" id="user-preset-meta-3">未保存</div>
+        </div>
+        <div class="btns">
+          <button id="user-preset-load-3">適用</button>
+          <button id="user-preset-save-3">保存</button>
+        </div>
+      </div>
+    </div>
+    <p class="caption">現在の調整値を保存して、複数画像への一括適用にすぐ再利用できます。</p>
+  </section>
+
 
   <section>
     <h2>輝度とグレイン量</h2>
@@ -285,12 +301,6 @@
     </div>
   </section>
 
-  <section>
-    <input type="file" id="file" accept="image/*" hidden multiple>
-    <p class="caption" id="queue-meta">最大5枚まで選択できます。現在の設定は選択した画像すべてに一括適用されます。</p>
-    <div class="thumb-strip" id="thumb-strip"></div>
-    <p class="caption" id="status">読み込み中…</p>
-  </section>
 </aside>
 
 <main id="main">
@@ -541,7 +551,7 @@ let userFiles = [];
 let currentFileIndex = -1;
 let thumbURLs = [];
 let loadUserToken = 0;
-let preparedBatchFiles = [];
+let exportResultURLs = [];
 
 const MAX_BATCH_FILES = 5;
 const USER_PRESET_KEY = "grain_user_presets_v1";
@@ -721,7 +731,6 @@ async function selectBatchIndex(idx){
   await loadUser(userFiles[idx]);
 }
 async function setBatchFiles(files){
-  preparedBatchFiles = [];
   const list = Array.from(files || []).filter(f => f && ((f.type || "").startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name)));
   if (!list.length) return;
   const clipped = list.slice(0, MAX_BATCH_FILES);
@@ -1147,79 +1156,112 @@ function canShareFiles(files){
   }
 }
 
-async function shareFilesNow(files){
-  if (!canShareFiles(files)) throw new Error("この環境では複数画像の共有に対応していません。");
-  // files だけを渡す。iOS の「画像を保存」が出やすい最小構成にする。
-  const result = navigator.share({files});
-  if (result && typeof result.then === "function") await result;
+function revokeExportResultURLs(){
+  exportResultURLs.forEach(u => URL.revokeObjectURL(u));
+  exportResultURLs = [];
 }
 
-function showBatchShareReady(files){
-  preparedBatchFiles = files.slice();
-  const n = preparedBatchFiles.length;
-  showNoteHTML(
-    `<div style="font-size:14px;font-weight:600;margin-bottom:6px">${n}枚の準備ができました</div>` +
-    `<div style="color:#9b9895;margin-bottom:12px">下のボタンを押すと、${n}枚まとめてiPhoneの共有シートへ送ります。</div>` +
-    `<button id="batch-share-now" class="wide" style="background:#b8935c;border-color:#b8935c;color:#221a0e;font-weight:600">${n}枚まとめて共有</button>` +
-    `<button id="batch-share-cancel" class="wide" style="margin-top:7px">キャンセル</button>`
-  );
+async function saveOneExportFile(file, button){
+  if (!file) return;
+  const oldText = button ? button.textContent : "";
+  if (button){ button.disabled = true; button.textContent = "保存を開いています…"; }
 
-  const shareBtn = document.getElementById("batch-share-now");
-  const cancelBtn = document.getElementById("batch-share-cancel");
-
-  if (shareBtn) shareBtn.onclick = async () => {
-    if (!preparedBatchFiles.length) return;
-    shareBtn.disabled = true;
-    shareBtn.textContent = "共有シートを開いています…";
-    try {
-      await shareFilesNow(preparedBatchFiles);
-      preparedBatchFiles = [];
-      hideNote();
-      render();
-    } catch(e){
-      // ユーザーが共有シートを閉じた場合は、もう一度押せるようにする。
-      shareBtn.disabled = false;
-      shareBtn.textContent = `${n}枚まとめて共有`;
-      if (!(e && e.name === "AbortError")) {
-        const msg = e && e.message ? e.message : String(e || "共有できませんでした");
-        const cap = document.createElement("div");
-        cap.className = "caption";
-        cap.style.marginTop = "8px";
-        cap.textContent = msg;
-        if (!document.getElementById("batch-share-error")) {
-          cap.id = "batch-share-error";
-          shareBtn.parentNode.appendChild(cap);
-        }
-      }
+  try {
+    if (isIOSDevice() && canShareFiles([file])){
+      await navigator.share({files:[file]});
+      if (button) button.textContent = "保存済み";
+      return;
     }
-  };
-  if (cancelBtn) cancelBtn.onclick = () => {
-    preparedBatchFiles = [];
+    if (tryDownload(file, file.name, inFrame)){
+      if (button) button.textContent = "保存済み";
+      return;
+    }
+    throw new Error("保存できませんでした");
+  } catch(e){
+    if (button){
+      button.disabled = false;
+      button.textContent = (e && e.name === "AbortError") ? oldText : "もう一度保存";
+    }
+  }
+}
+
+function showExportResults(files){
+  revokeExportResultURLs();
+
+  const wrap = document.createElement("div");
+  wrap.className = "export-gallery";
+
+  const head = document.createElement("div");
+  head.className = "export-gallery-head";
+  head.textContent = `${files.length}枚の加工が完了しました`;
+  const sub = document.createElement("div");
+  sub.className = "export-gallery-sub";
+  sub.textContent = "下の「写真に保存」を順番に押してください。加工はすでに完了しているので、保存はすぐ開きます。";
+  wrap.append(head, sub);
+
+  files.forEach((file, idx) => {
+    const row = document.createElement("div");
+    row.className = "export-item";
+
+    const img = document.createElement("img");
+    const url = URL.createObjectURL(file);
+    exportResultURLs.push(url);
+    img.src = url;
+    img.alt = `${idx+1}枚目の加工済み画像`;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const name = document.createElement("div");
+    name.className = "file-name";
+    name.textContent = `${idx+1}. ${file.name}`;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "save-one";
+    btn.textContent = "写真に保存";
+    btn.onclick = () => saveOneExportFile(file, btn);
+
+    meta.append(name, btn);
+    row.append(img, meta);
+    wrap.appendChild(row);
+  });
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "export-gallery-close";
+  close.textContent = "閉じる";
+  close.onclick = () => {
+    revokeExportResultURLs();
     hideNote();
     render();
   };
+  wrap.appendChild(close);
+
+  note.innerHTML = "";
+  note.appendChild(wrap);
+  note.classList.add("show");
 }
 
 async function deliverFiles(files){
   if (!files || !files.length) throw new Error("保存する画像がありませんでした");
 
-  if (isIOSDevice() && canShareFiles(files)){
+  if (files.length > 1){
+    showExportResults(files);
+    return;
+  }
+
+  const file = files[0];
+  if (isIOSDevice() && canShareFiles([file])){
     try {
-      await shareFilesNow(files);
+      await navigator.share({files:[file]});
       hideNote();
       render();
       return;
     } catch(e){
       if (e && e.name === "AbortError") return;
-      // 共有に失敗した場合のみ通常ダウンロードへフォールバック
     }
   }
 
-  let ok = 0;
-  for (const f of files){
-    if (tryDownload(f, f.name, inFrame)) ok++;
-  }
-  if (ok){
+  if (tryDownload(file, file.name, inFrame)){
     hideNote();
     render();
     return;
@@ -1256,9 +1298,9 @@ async function exportFileToOutput(file, idx){
 
 document.getElementById("b-save").onclick = async () => {
   const batch = userFiles.length ? userFiles.slice() : [];
-  preparedBatchFiles = [];
+  revokeExportResultURLs();
 
-  // 1枚はこれまで通り、処理後すぐ共有を試す。
+  // 1枚は従来通り、書き出し後すぐ保存を開く。
   if (batch.length <= 1){
     if (!isIOSDevice()) showNote("書き出し中…");
     else hideNote();
@@ -1271,35 +1313,16 @@ document.getElementById("b-save").onclick = async () => {
     return;
   }
 
-  // 複数枚は原寸処理に時間がかかるため、iOS の transient user activation が切れやすい。
-  // まず全画像を作成し、その後の明示的なタップでまとめて共有する。
-  showNote(`0/${batch.length} を書き出し準備中…`);
+  // 複数枚はここでまとめて加工だけ終わらせる。
+  // 完了後に加工済み画像を一覧表示し、各画像を1タップずつ写真へ保存する。
+  showNote(`0/${batch.length} を一括加工中…`);
   try {
     const files = [];
     for (let i=0; i<batch.length; i++){
-      showNote(`${i+1}/${batch.length} を書き出し準備中…
-${batch[i].name}`);
+      showNote(`${i+1}/${batch.length} を一括加工中…\n${batch[i].name}`);
       files.push(await exportFileToOutput(batch[i], i));
     }
-
-    if (isIOSDevice()){
-      // 処理が非常に速く、まだ user activation が生きているなら1タップのまま共有。
-      const stillActive = !navigator.userActivation || navigator.userActivation.isActive;
-      if (stillActive && canShareFiles(files)){
-        try {
-          await shareFilesNow(files);
-          hideNote();
-          render();
-          return;
-        } catch(e){
-          if (e && e.name === "AbortError") return;
-        }
-      }
-      // 通常はこちら。次のタップが確実な user activation になる。
-      showBatchShareReady(files);
-    } else {
-      await deliverFiles(files);
-    }
+    showExportResults(files);
   } catch(err){
     showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
   }
