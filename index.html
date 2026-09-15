@@ -924,7 +924,15 @@ async function deliver(c2, sizeNote){
 }
 
 document.getElementById("b-save").onclick = async () => {
-  showNote("書き出し中…");
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  // iPhone / iPad では共有シートを最優先にしたいので、
+  // 中間ダイアログは出さず、そのまま書き出し→共有へ進む。
+  // 失敗時だけメッセージを出す。
+  if (!isIOS) showNote("書き出し中…");
+  else hideNote();
+
   try {
     let c2 = buildExport(null), sizeNote = "";
     if (!c2){
