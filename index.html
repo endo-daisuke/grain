@@ -71,6 +71,20 @@
   .curve{background:var(--panel-2);border:1px solid var(--line);padding:8px 6px 4px}
   .curve svg{display:block;width:100%;height:auto}
   .caption{font-size:11px;color:var(--ink-dim);margin-top:7px;line-height:1.45}
+  .preset-list{display:flex;flex-direction:column;gap:8px}
+  .preset-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px;border:1px solid var(--line);background:var(--panel-2)}
+  .preset-row .meta{min-width:0}
+  .preset-row .name{font-size:12px;font-weight:600}
+  .preset-row .sub{font-size:10px;color:var(--ink-dim);margin-top:2px}
+  .preset-row .btns{flex-wrap:nowrap}
+  .preset-row button{padding:6px 9px}
+  .thumb-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
+  .thumb{display:flex;align-items:center;gap:8px;width:100%;padding:6px;background:var(--panel-2);border:1px solid var(--line);text-align:left}
+  .thumb.current{border-color:var(--mark);box-shadow:inset 0 0 0 1px var(--mark)}
+  .thumb img{width:54px;height:54px;object-fit:cover;display:block;background:#111;flex:0 0 auto}
+  .thumb .meta{min-width:0;display:flex;flex-direction:column;gap:2px}
+  .thumb .idx{font-size:10px;color:var(--mark)}
+  .thumb .name{font-size:11px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
   main{flex:1;position:relative;overflow:hidden;background:var(--surround);touch-action:none}
   #stage{position:absolute;top:0;left:0;transform-origin:0 0;touch-action:none}
@@ -157,14 +171,42 @@
     <p>実測したフィルムスキャンから校正</p>
   </div>
 
+
   <section>
-    <h2>実測データ</h2>
-    <div class="btns">
-      <button id="p-minilab" class="on">ミニラボ 35mm</button>
-      <button id="p-frontier6k">フロンティア 6K</button>
-      <button id="p-drum">ドラム 中判</button>
+    <h2>マイプリセット</h2>
+    <div class="preset-list">
+      <div class="preset-row">
+        <div class="meta">
+          <div class="name">プリセット 1</div>
+          <div class="sub" id="user-preset-meta-1">未保存</div>
+        </div>
+        <div class="btns">
+          <button id="user-preset-load-1">適用</button>
+          <button id="user-preset-save-1">保存</button>
+        </div>
+      </div>
+      <div class="preset-row">
+        <div class="meta">
+          <div class="name">プリセット 2</div>
+          <div class="sub" id="user-preset-meta-2">未保存</div>
+        </div>
+        <div class="btns">
+          <button id="user-preset-load-2">適用</button>
+          <button id="user-preset-save-2">保存</button>
+        </div>
+      </div>
+      <div class="preset-row">
+        <div class="meta">
+          <div class="name">プリセット 3</div>
+          <div class="sub" id="user-preset-meta-3">未保存</div>
+        </div>
+        <div class="btns">
+          <button id="user-preset-load-3">適用</button>
+          <button id="user-preset-save-3">保存</button>
+        </div>
+      </div>
     </div>
-    <p class="caption" id="p-note"></p>
+    <p class="caption">現在の調整値を保存して、複数画像への一括適用にすぐ再利用できます。</p>
   </section>
 
   <section>
@@ -244,7 +286,9 @@
   </section>
 
   <section>
-    <input type="file" id="file" accept="image/*" hidden>
+    <input type="file" id="file" accept="image/*" hidden multiple>
+    <p class="caption" id="queue-meta">最大5枚まで選択できます。現在の設定は選択した画像すべてに一括適用されます。</p>
+    <div class="thumb-strip" id="thumb-strip"></div>
     <p class="caption" id="status">読み込み中…</p>
   </section>
 </aside>
@@ -493,6 +537,13 @@ const ctx = cv.getContext("2d", {willReadFrequently:false});
 let basePix = null, realPix = null, outImg = null;
 let fullBaseCanvas = null;          // 書き出し用の原寸
 let noiseCache = {key:"", f:null};
+let userFiles = [];
+let currentFileIndex = -1;
+let thumbURLs = [];
+let loadUserToken = 0;
+
+const MAX_BATCH_FILES = 5;
+const USER_PRESET_KEY = "grain_user_presets_v1";
 
 function grainPxFull(){
   return S.autoScale ? S.size * (S.fullW / REF_WIDTH) : S.size;
@@ -595,6 +646,94 @@ function render(){
     layout();
   });
 }
+
+function isIOSDevice(){
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+         (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+function updateSaveButtonLabel(){
+  const btn = document.getElementById("b-save");
+  if (!btn) return;
+  btn.textContent = userFiles.length > 1 ? `${userFiles.length}枚を書き出す` : "書き出す";
+}
+function revokeThumbs(){
+  thumbURLs.forEach(u => URL.revokeObjectURL(u));
+  thumbURLs = [];
+}
+function refreshThumbs(){
+  const strip = document.getElementById("thumb-strip");
+  if (!strip) return;
+  revokeThumbs();
+  strip.innerHTML = "";
+  if (!userFiles.length) return;
+  userFiles.forEach((file, idx) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "thumb" + (idx === currentFileIndex ? " current" : "");
+    b.addEventListener("click", () => { if (idx !== currentFileIndex) selectBatchIndex(idx); });
+    const im = document.createElement("img");
+    const u = URL.createObjectURL(file);
+    thumbURLs.push(u);
+    im.src = u;
+    im.alt = file.name;
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    const idxEl = document.createElement("span");
+    idxEl.className = "idx";
+    idxEl.textContent = `${idx+1} / ${userFiles.length}`;
+    const nameEl = document.createElement("span");
+    nameEl.className = "name";
+    nameEl.textContent = file.name;
+    meta.append(idxEl, nameEl);
+    b.append(im, meta);
+    strip.appendChild(b);
+  });
+}
+function updateQueueMeta(extra){
+  const meta = document.getElementById("queue-meta");
+  if (!meta) return;
+  if (!userFiles.length){
+    meta.textContent = "最大5枚まで選択できます。現在の設定は選択した画像すべてに一括適用されます。";
+    return;
+  }
+  meta.textContent = `${userFiles.length}枚選択中。現在の調整値はすべての画像に一括適用されます。サムネイルをタップすると個別にプレビューできます。` + (extra ? ` ${extra}` : "");
+}
+function setUserStatus(message){
+  const st = document.getElementById("status");
+  if (st) st.textContent = message;
+}
+function updateLoadedStatus(file, via, iw, ih){
+  const prefix = userFiles.length ? `${userFiles.length}枚選択中 / ${currentFileIndex+1}枚目: ${file.name}` : file.name;
+  setUserStatus(
+    prefix + " / " + iw + "×" + ih + "（" + via + "）。粒径は原寸で " +
+    grainPxFull().toFixed(2) + "px 相当。プレビューは " + S.w +
+    "px 幅の縮小版で、書き出しは原寸で計算します。"
+  );
+  updateQueueMeta();
+  updateSaveButtonLabel();
+  refreshThumbs();
+}
+async function selectBatchIndex(idx){
+  if (idx < 0 || idx >= userFiles.length) return;
+  currentFileIndex = idx;
+  refreshThumbs();
+  await loadUser(userFiles[idx]);
+}
+async function setBatchFiles(files){
+  const list = Array.from(files || []).filter(f => f && ((f.type || "").startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name)));
+  if (!list.length) return;
+  const clipped = list.slice(0, MAX_BATCH_FILES);
+  userFiles = clipped;
+  currentFileIndex = 0;
+  refreshThumbs();
+  updateQueueMeta(list.length > MAX_BATCH_FILES ? `最大${MAX_BATCH_FILES}枚までのため、先頭${MAX_BATCH_FILES}枚を読み込みました。` : "");
+  updateSaveButtonLabel();
+  if (list.length > MAX_BATCH_FILES){
+    showNote(`画像は最大${MAX_BATCH_FILES}枚までです。先頭${MAX_BATCH_FILES}枚を読み込みました。`);
+  }
+  await loadUser(userFiles[0]);
+}
+
 
 /* ---------- 表示 ---------- */
 const stage = document.getElementById("stage");
@@ -781,13 +920,19 @@ function applyPreset(name){
              "s-wr":Math.round(P.wR*100), "s-wg":Math.round(P.wG*100), "s-wb":Math.round(P.wB*100)};
   for (const id in d) document.getElementById(id).value = d[id];
   [bSize,bClump,bChroma,bWR,bWG,bWB].forEach(b => b.upd());
-  for (const k in PRESETS)
-    document.getElementById("p-"+k).classList.toggle("on", k===name);
-  document.getElementById("p-note").textContent = P.note;
+  for (const k in PRESETS){
+    const btn = document.getElementById("p-"+k);
+    if (btn) btn.classList.toggle("on", k===name);
+  }
+  const pNote = document.getElementById("p-note");
+  if (pNote) pNote.textContent = P.note;
   noiseCache = {key:"", f:null};
   render(); plot();
 }
-for (const k in PRESETS) document.getElementById("p-"+k).onclick = () => applyPreset(k);
+for (const k in PRESETS){
+  const btn = document.getElementById("p-"+k);
+  if (btn) btn.onclick = () => applyPreset(k);
+}
 
 const fmtBtn = document.getElementById("b-fmt") || {classList:{toggle(){}}, style:{}};
 function setFmt(f){
@@ -810,6 +955,87 @@ document.getElementById("b-reset").onclick = () => {
   applyPreset(S.preset);
 };
 
+function captureCurrentSettings(){
+  return {
+    preset:S.preset,
+    amount:S.amount, size:S.size, clump:S.clump, chroma:S.chroma, follow:S.follow,
+    wR:S.wR, wG:S.wG, wB:S.wB, dust:S.dust, dustSize:S.dustSize,
+    autoScale:S.autoScale, fmt:S.fmt
+  };
+}
+function readUserPresets(){
+  try { return JSON.parse(localStorage.getItem(USER_PRESET_KEY) || "{}"); }
+  catch(_){ return {}; }
+}
+function writeUserPresets(data){
+  try { localStorage.setItem(USER_PRESET_KEY, JSON.stringify(data)); } catch(_){ }
+}
+function updateUserPresetButtons(){
+  const saved = readUserPresets();
+  [1,2,3].forEach(slot => {
+    const el = document.getElementById(`user-preset-meta-${slot}`);
+    const item = saved[slot];
+    if (!el) return;
+    if (!item || !item.data){
+      el.textContent = "未保存";
+      return;
+    }
+    const dt = new Date(item.savedAt || Date.now());
+    const mm = String(dt.getMonth()+1).padStart(2, "0");
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const hh = String(dt.getHours()).padStart(2, "0");
+    const mi = String(dt.getMinutes()).padStart(2, "0");
+    el.textContent = `${mm}/${dd} ${hh}:${mi} 保存`;
+  });
+}
+function applySavedSettings(data){
+  if (!data) return;
+  if (data.preset) applyPreset(data.preset);
+  const sliderValues = {
+    "s-amt": Math.round((data.amount ?? S.amount) * 100),
+    "s-size": data.size ?? S.size,
+    "s-clump": Math.round((data.clump ?? S.clump) * 100),
+    "s-chroma": Math.round((data.chroma ?? S.chroma) * 100),
+    "s-follow": Math.round((data.follow ?? S.follow) * 100),
+    "s-wr": Math.round((data.wR ?? S.wR) * 100),
+    "s-wg": Math.round((data.wG ?? S.wG) * 100),
+    "s-wb": Math.round((data.wB ?? S.wB) * 100),
+    "s-dust": data.dust ?? S.dust,
+    "s-dustsz": data.dustSize ?? S.dustSize
+  };
+  for (const id in sliderValues) document.getElementById(id).value = sliderValues[id];
+  document.getElementById("c-scale").checked = !!data.autoScale;
+  S.autoScale = !!data.autoScale;
+  B.forEach(b => b.upd());
+  setFmt(data.fmt === "jpeg" ? "jpeg" : "png");
+  render();
+  plot();
+}
+function saveUserPreset(slot){
+  const saved = readUserPresets();
+  saved[slot] = {savedAt:Date.now(), data:captureCurrentSettings()};
+  writeUserPresets(saved);
+  updateUserPresetButtons();
+  showNote(`プリセット ${slot} に保存しました。`);
+  setTimeout(() => hideNote(), 800);
+}
+function loadUserPreset(slot){
+  const saved = readUserPresets();
+  const item = saved[slot];
+  if (!item || !item.data){
+    showNote(`プリセット ${slot} はまだ保存されていません。`);
+    return;
+  }
+  applySavedSettings(item.data);
+  showNote(`プリセット ${slot} を適用しました。`);
+  setTimeout(() => hideNote(), 700);
+}
+[1,2,3].forEach(slot => {
+  document.getElementById(`user-preset-save-${slot}`).onclick = () => saveUserPreset(slot);
+  document.getElementById(`user-preset-load-${slot}`).onclick = () => loadUserPreset(slot);
+});
+updateUserPresetButtons();
+
 /* ---------- 書き出し ---------- */
 function canvasAlive(c){
   try {
@@ -822,36 +1048,34 @@ function canvasAlive(c){
 }
 
 /* 原寸のきれいな元データから合成し直す。プレビュー用キャンバスは既に粒が乗っているので使わない */
-function buildExport(maxArea){
-  let w, h, data, fullW;
-  if (fullBaseCanvas){
-    fullW = fullBaseCanvas.width;
-    w = fullBaseCanvas.width; h = fullBaseCanvas.height;
-    if (maxArea && w*h > maxArea){
-      const k = Math.sqrt(maxArea/(w*h));
-      w = Math.max(1, Math.round(w*k)); h = Math.max(1, Math.round(h*k));
-    }
-    const c0 = document.createElement("canvas");
-    c0.width = w; c0.height = h;
-    const x0 = c0.getContext("2d");
-    x0.drawImage(fullBaseCanvas, 0, 0, w, h);
-    if (!canvasAlive(c0)) return null;
-    data = x0.getImageData(0,0,w,h).data;
-  } else {
-    fullW = S.w; w = S.w; h = S.h;
-    data = new Uint8ClampedArray(basePix);
+function buildExportFromCanvas(sourceCanvas, maxArea){
+  const fullW0 = sourceCanvas.width;
+  let w = sourceCanvas.width, h = sourceCanvas.height;
+  if (maxArea && w*h > maxArea){
+    const k = Math.sqrt(maxArea/(w*h));
+    w = Math.max(1, Math.round(w*k)); h = Math.max(1, Math.round(h*k));
   }
 
-  const keepPs = S.previewScale, keepView = S.view;
+  const c0 = document.createElement("canvas");
+  c0.width = w; c0.height = h;
+  const x0 = c0.getContext("2d");
+  x0.drawImage(sourceCanvas, 0, 0, w, h);
+  if (!canvasAlive(c0)) return null;
+  const data = x0.getImageData(0,0,w,h).data;
+
+  const keepPs = S.previewScale, keepView = S.view, keepFullW = S.fullW;
   let px;
   try {
     S.previewScale = 1;
+    S.fullW = fullW0;
     if (S.view === "split") S.view = "single";
     noiseCache = {key:"", f:null};
-    const gp = Math.max(0.35, grainPxFull() * (w/fullW)) + 0.013;
+    const gp = Math.max(0.35, grainPxFull() * (w/fullW0)) + 0.013;
     px = apply(data, w, h, gp, -1, null);
   } finally {
-    S.previewScale = keepPs; S.view = keepView;
+    S.previewScale = keepPs;
+    S.view = keepView;
+    S.fullW = keepFullW;
     noiseCache = {key:"", f:null};
   }
 
@@ -862,6 +1086,18 @@ function buildExport(maxArea){
   im.data.set(px);
   x2.putImageData(im, 0, 0);
   return c2;
+}
+
+function buildExport(maxArea){
+  if (fullBaseCanvas) return buildExportFromCanvas(fullBaseCanvas, maxArea);
+
+  const c0 = document.createElement("canvas");
+  c0.width = S.w; c0.height = S.h;
+  const x0 = c0.getContext("2d");
+  const im0 = x0.createImageData(S.w, S.h);
+  im0.data.set(new Uint8ClampedArray(basePix));
+  x0.putImageData(im0, 0, 0);
+  return buildExportFromCanvas(c0, maxArea);
 }
 
 function scaledCopy(c, maxSide){
@@ -886,24 +1122,31 @@ function tryDownload(blob, name, newTab){
   } catch(e){ return false; }
 }
 
-async function deliver(c2, sizeNote){
+async function canvasToExportFile(c2, name){
   const png = S.fmt === "png";
   const mime = png ? "image/png" : "image/jpeg";
   const q = png ? undefined : 0.96;
-  const name = "grain_" + Date.now() + (png ? ".png" : ".jpg");
   const blob = await new Promise(r => { try { c2.toBlob(r, mime, q); } catch(e){ r(null); } });
   if (!blob) throw new Error("書き出しデータを作れませんでした");
+  return new File([blob], name, {type:mime});
+}
 
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-                (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+function exportNameFor(originalName, index){
+  const ext = S.fmt === "png" ? ".png" : ".jpg";
+  const base = (originalName || `grain_${Date.now()}_${index+1}`).replace(/\.[^.]+$/, "");
+  return base + "_grain" + ext;
+}
 
-  // iPhone / iPad は共有シートを直接開く。
-  // 余計なプレビュー画面は出さず、ここから「画像を保存」を選べるようにする。
-  if (isIOS && navigator.canShare){
+async function deliverFiles(files){
+  if (!files || !files.length) throw new Error("保存する画像がありませんでした");
+
+  if (isIOSDevice() && navigator.canShare){
     try {
-      const f = new File([blob], name, {type:mime});
-      if (navigator.canShare({files:[f]})){
-        await navigator.share({files:[f], title:name});
+      if (navigator.canShare({files})){
+        await navigator.share({
+          files,
+          title: files.length > 1 ? `${files.length}枚の画像` : files[0].name
+        });
         hideNote();
         render();
         return;
@@ -913,8 +1156,11 @@ async function deliver(c2, sizeNote){
     }
   }
 
-  // PCなどはそのままダウンロード。iframe内では別タブ扱いにして画面を維持する。
-  if (tryDownload(blob, name, inFrame)){
+  let ok = 0;
+  for (const f of files){
+    if (tryDownload(f, f.name, inFrame)) ok++;
+  }
+  if (ok){
     hideNote();
     render();
     return;
@@ -923,28 +1169,51 @@ async function deliver(c2, sizeNote){
   showNote("保存できませんでした。Safariでは共有メニューから保存を試してください。");
 }
 
-document.getElementById("b-save").onclick = async () => {
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-                (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+async function exportCurrentViewFile(){
+  let c2 = buildExport(null);
+  if (!c2) c2 = buildExport(16.7e6);
+  if (!c2) c2 = buildExport(4e6);
+  if (!c2) throw new Error("書き出し用のキャンバスを確保できませんでした。");
+  return await canvasToExportFile(c2, exportNameFor(userFiles[currentFileIndex]?.name || ("grain_" + Date.now()), Math.max(0, currentFileIndex)));
+}
 
-  // iPhone / iPad では共有シートを最優先にしたいので、
-  // 中間ダイアログは出さず、そのまま書き出し→共有へ進む。
-  // 失敗時だけメッセージを出す。
-  if (!isIOS) showNote("書き出し中…");
+async function exportFileToOutput(file, idx){
+  const r = await decodeFile(file);
+  const img = r.img;
+  const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
+  if (!iw || !ih) throw new Error(file.name + " の寸法が取得できませんでした");
+
+  const src = document.createElement("canvas");
+  src.width = iw; src.height = ih;
+  src.getContext("2d").drawImage(img, 0, 0);
+
+  let c2 = buildExportFromCanvas(src, null);
+  if (!c2) c2 = buildExportFromCanvas(src, 16.7e6);
+  if (!c2) c2 = buildExportFromCanvas(src, 4e6);
+  if (!c2) throw new Error(file.name + " の書き出し用キャンバスを確保できませんでした。");
+
+  return await canvasToExportFile(c2, exportNameFor(file.name, idx));
+}
+
+document.getElementById("b-save").onclick = async () => {
+  const batch = userFiles.length ? userFiles.slice() : [];
+  const showProgress = batch.length > 1 || !isIOSDevice();
+
+  if (showProgress) showNote(batch.length > 1 ? `0/${batch.length} を書き出し中…` : "書き出し中…");
   else hideNote();
 
   try {
-    let c2 = buildExport(null), sizeNote = "";
-    if (!c2){
-      c2 = buildExport(16.7e6);
-      sizeNote = "原寸ではキャンバスを確保できなかったため縮小しました。";
+    const files = [];
+    if (!batch.length){
+      files.push(await exportCurrentViewFile());
+    } else {
+      for (let i=0; i<batch.length; i++){
+        if (showProgress) showNote(`${i+1}/${batch.length} を書き出し中…\n${batch[i].name}`);
+        files.push(await exportFileToOutput(batch[i], i));
+      }
     }
-    if (!c2){
-      c2 = buildExport(4e6);
-      sizeNote = "この環境の上限に合わせて大きく縮小しました。";
-    }
-    if (!c2){ showNote("書き出し用のキャンバスを確保できませんでした。"); return; }
-    await deliver(c2, sizeNote);
+    if (showProgress && batch.length > 1) showNote(`共有シートを開いています…\n${files.length}枚`);
+    await deliverFiles(files);
   } catch(err){
     showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
   }
@@ -953,14 +1222,17 @@ document.getElementById("b-save").onclick = async () => {
 /* ---------- 画像読み込み ---------- */
 const fileEl = document.getElementById("file");
 document.getElementById("b-open").onclick = () => fileEl.click();
-fileEl.addEventListener("change", e => { if (e.target.files[0]) loadUser(e.target.files[0]); });
+fileEl.addEventListener("change", async e => {
+  if (e.target.files && e.target.files.length) await setBatchFiles(e.target.files);
+  fileEl.value = "";
+});
 
 const dropEl = document.getElementById("drop");
 ["dragenter","dragover"].forEach(t => mainEl.addEventListener(t, e => { e.preventDefault(); dropEl.classList.add("show"); }));
 ["dragleave","drop"].forEach(t => mainEl.addEventListener(t, e => { e.preventDefault(); dropEl.classList.remove("show"); }));
-mainEl.addEventListener("drop", e => {
-  const f = e.dataTransfer.files[0];
-  if (f) loadUser(f);
+mainEl.addEventListener("drop", async e => {
+  const files = Array.from(e.dataTransfer.files || []).filter(Boolean);
+  if (files.length) await setBatchFiles(files);
 });
 
 async function decodeFile(file){
@@ -1001,13 +1273,16 @@ async function decodeFile(file){
 }
 
 async function loadUser(file){
+  const token = ++loadUserToken;
   showNote("読み込み中…\n" + file.name + "\n" + (file.type || "形式不明") +
            " / " + Math.round(file.size/1024) + "KB");
   let img, via;
   try {
     const r = await decodeFile(file);
+    if (token !== loadUserToken) return;
     img = r.img; via = r.via;
   } catch(e){
+    if (token !== loadUserToken) return;
     const heic = /heic|heif/i.test(file.type + " " + file.name);
     showNote(
       "この画像を展開できませんでした。\n\n" +
@@ -1017,6 +1292,7 @@ async function loadUser(file){
       "試した経路:\n" + (e.tried || []).join("\n"));
     return;
   }
+  if (token !== loadUserToken) return;
   hideNote();
 
   const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
@@ -1043,10 +1319,7 @@ async function loadUser(file){
   document.getElementById("b-split").disabled = true;
   noiseCache = {key:"", f:null};
   setView("single");
-  document.getElementById("status").textContent =
-    file.name + " / " + iw + "×" + ih + "（" + via + "）。粒径は原寸で " +
-    grainPxFull().toFixed(2) + "px 相当。プレビューは " + S.w +
-    "px 幅の縮小版で、書き出しは原寸で計算します。";
+  updateLoadedStatus(file, via, iw, ih);
   render(); fit();
 }
 
@@ -1096,6 +1369,9 @@ function ready(){
 
     document.getElementById("status").textContent =
       "サンプルは 000039 の等倍切り出し。左が実際のフィルム、右はそれをデノイズして粒を消したものに合成グレインを乗せています。";
+    updateQueueMeta();
+    updateSaveButtonLabel();
+    refreshThumbs();
     applyPreset("minilab");
     plot(); render(); setZoom(1); center();
   } catch(err){ showNote("初期化に失敗しました\n" + err.message); }
