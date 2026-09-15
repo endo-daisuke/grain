@@ -892,99 +892,54 @@ async function deliver(c2, sizeNote){
   const q = png ? undefined : 0.96;
   const name = "grain_" + Date.now() + (png ? ".png" : ".jpg");
   const blob = await new Promise(r => { try { c2.toBlob(r, mime, q); } catch(e){ r(null); } });
+  if (!blob) throw new Error("書き出しデータを作れませんでした");
 
   const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
                 (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 
-  // iPhone / iPad では通常ダウンロードを先に走らせず、
-  // 下の Web Share API を優先して共有シートから「画像を保存」できるようにする
-  // PCなどでは今まで通り直接ダウンロード
-  if (!isIOS && !inFrame && blob && tryDownload(blob, name)){
-    hideNote(); render(); return;
+  // iPhone / iPad は共有シートを直接開く。
+  // 余計なプレビュー画面は出さず、ここから「画像を保存」を選べるようにする。
+  if (isIOS && navigator.canShare){
+    try {
+      const f = new File([blob], name, {type:mime});
+      if (navigator.canShare({files:[f]})){
+        await navigator.share({files:[f], title:name});
+        hideNote();
+        render();
+        return;
+      }
+    } catch(e){
+      // 共有シートを閉じた／共有に失敗した場合は通常ダウンロードへフォールバック
+    }
   }
 
-  const disp = scaledCopy(c2, 1800);
-  const dispUrl = disp.toDataURL("image/jpeg", 0.9);   // 表示用は軽さ優先
-  const big = c2.width*c2.height > 12e6;
+  // PCなどはそのままダウンロード。iframe内では別タブ扱いにして画面を維持する。
+  if (tryDownload(blob, name, inFrame)){
+    hideNote();
+    render();
+    return;
+  }
 
-  showNoteHTML(
-    "書き出しました。" + c2.width + "×" + c2.height + "px、" + (png ? "PNG" : "JPEG") + "。" + (sizeNote || "") +
-    '<img id="n-img" src="' + dispUrl + '" alt="書き出した画像">' +
-    '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-      '<button id="n-save">' + (isIOS ? '写真に保存' : 'デバイスに保存') + '</button>' +
-      (big ? '<button id="n-full">原寸で表示</button>' : '') +
-      '<button id="n-close">閉じる</button></div>' +
-    '<p class="caption">保存されないときは上の画像を長押し（右クリック）してください。' +
-    (big ? 'その場合は先に「原寸で表示」を押してください。' : '') + '</p>');
-
-  const close = document.getElementById("n-close");
-  if (close) close.onclick = () => { hideNote(); render(); };
-
-  const full = document.getElementById("n-full");
-  if (full) full.onclick = () => {
-    full.disabled = true; full.textContent = "生成中…";
-    setTimeout(() => {
-      try { document.getElementById("n-img").src = c2.toDataURL(mime, q); full.textContent = "原寸を表示中"; }
-      catch(e){ full.textContent = "原寸の生成に失敗"; }
-    }, 40);
-  };
-
-  // 押された瞬間に保存系を呼ぶ。重い処理は済ませてあるので操作の権限が生きている
-  const save = document.getElementById("n-save");
-  if (save) save.onclick = async () => {
-    if (!blob){ save.textContent = "データを作れませんでした"; return; }
-    save.disabled = true; save.textContent = "保存中…";
-    let ok = false;
-
-    // 1) 保存ダイアログ（PCのChrome系）
-    if (window.showSaveFilePicker){
-      try {
-        const h = await window.showSaveFilePicker({
-          suggestedName: name,
-          types: png ? [{description:"PNG", accept:{"image/png":[".png"]}}]
-                     : [{description:"JPEG", accept:{"image/jpeg":[".jpg",".jpeg"]}}]
-        });
-        const w = await h.createWritable();
-        await w.write(blob); await w.close();
-        ok = true;
-      } catch(e){
-        if (e && e.name === "AbortError"){ save.disabled = false; save.textContent = isIOS ? "写真に保存" : "デバイスに保存"; return; }
-      }
-    }
-    // 2) 共有シート（iPhone / Android）。ここから写真アプリに保存できる
-    if (!ok && navigator.canShare){
-      try {
-        const f = new File([blob], name, {type:mime});
-        if (navigator.canShare({files:[f]})){ await navigator.share({files:[f], title:name}); ok = true; }
-      } catch(e){ /* 閉じられただけの場合もある */ }
-    }
-    // 3) 通常のダウンロード。枠の中では別タブを指定して、この画面が消えないようにする
-    if (!ok) ok = tryDownload(blob, name, inFrame);
-
-    save.disabled = false;
-    save.textContent = ok ? (isIOS ? "共有シートを開きました" : "保存しました") : "保存できませんでした";
-  };
+  showNote("保存できませんでした。Safariでは共有メニューから保存を試してください。");
 }
 
-document.getElementById("b-save").onclick = () => {
+document.getElementById("b-save").onclick = async () => {
   showNote("書き出し中…");
-  setTimeout(async () => {
-    try {
-      let c2 = buildExport(null), sizeNote = "";
-      if (!c2){
-        c2 = buildExport(16.7e6);
-        sizeNote = "原寸ではキャンバスを確保できなかったため縮小しました。";
-      }
-      if (!c2){
-        c2 = buildExport(4e6);
-        sizeNote = "この環境の上限に合わせて大きく縮小しました。";
-      }
-      if (!c2){ showNote("書き出し用のキャンバスを確保できませんでした。"); return; }
-      await deliver(c2, sizeNote);
-    } catch(err){
-      showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
+  try {
+    let c2 = buildExport(null), sizeNote = "";
+    if (!c2){
+      c2 = buildExport(16.7e6);
+      sizeNote = "原寸ではキャンバスを確保できなかったため縮小しました。";
     }
-  }, 60);
+    if (!c2){
+      c2 = buildExport(4e6);
+      sizeNote = "この環境の上限に合わせて大きく縮小しました。";
+    }
+    if (!c2){ showNote("書き出し用のキャンバスを確保できませんでした。"); return; }
+    await deliver(c2, sizeNote);
+  } catch(err){
+    showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
+  }
 };
 
 /* ---------- 画像読み込み ---------- */
