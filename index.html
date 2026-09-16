@@ -388,7 +388,7 @@ window.addEventListener("error", e => showNote("エラー\n" + (e.message || e))
 /* ---------- 版 ----------
    どの index.html が動いているかを画面から判別するための印。
    差し替えるたびにここの数字を上げる */
-const BUILD = "2026-09-15 g";
+const BUILD = "2026-09-15 h";
 (function(){
   const v = document.getElementById("ver");
   if (v) v.textContent = BUILD;
@@ -593,27 +593,22 @@ const OCT_COARSE = 2.2;
 /* acc*m + co*wA の分散。m=1+mA*(|co|-0.7979) で co は分散1。
    E[m^2] = 1 + mA^2*Var(|N|) = 1 + mA^2*(1-0.7979^2) を使う */
 function SPREAD_NORM(sp){
-  const wA = sp*0.75, mA = sp*0.90;
-  const varM = 1 + mA*mA*(1 - 0.7979*0.7979);
-  return 1/Math.sqrt(varM + wA*wA);
+  const mA = sp*0.90;
+  return 1/Math.sqrt(1 + mA*mA*(1 - 0.7979*0.7979));
 }
 
 /* 粒径のばらつき。実フィルムは結晶サイズに分布があるので、
    細かい・基準・粗いの3層を重ねる。単一格子だと「同じ粒が整列している」
    質感になり、これが規則的に見える原因になる。
    合成後も分散が1になるよう重みを正規化する */
-function spreadField(w, h, s, seed, yOff, clump, sp){
-  if (sp <= 0.001) return noiseField(w, h, s, seed, yOff, clump);
-  // 粗い層を1枚だけ作り、(1) 足し込む (2) その絶対値で基準層の振幅を揺らす。
-  // (2) が「塊の濃淡」を作る。細かい層を足す方式は帯を刻む必要があって
-  // 4倍以上重くなるので使わない
-  const co = noiseField(w, h, s*OCT_COARSE, seed+1013, yOff, clump);
+function spreadField(w, h, s, seed, yOff, clump, sp, co){
   const acc = noiseField(w, h, s, seed, yOff, clump);
-  const wA = sp*0.75, mA = sp*0.90;
-  const norm = SPREAD_NORM(sp);
+  if (sp <= 0.001 || !co) return acc;
+  // 粗い場は「振幅を揺らす」だけに使う。足し込むと粒そのものが大きくなり、
+  // 形が変わってしまう。co は全チャンネル共通なので色の斑も出ない
+  const mA = sp*0.90, norm = SPREAD_NORM(sp);
   for (let i=0;i<acc.length;i++){
-    const m = 1 + mA*(Math.abs(co[i]) - 0.7979);   // |N(0,1)| の平均は 0.7979
-    acc[i] = (acc[i]*m + co[i]*wA) * norm;
+    acc[i] *= (1 + mA*(Math.abs(co[i]) - 0.7979)) * norm;   // |N(0,1)| の平均は 0.7979
   }
   return acc;
 }
@@ -623,11 +618,13 @@ function getNoise(w, h, s, yOff){
   const key = w+"x"+h+"@"+s.toFixed(3)+"+"+yOff+"c"+cl.toFixed(3)
             + "s"+sp.toFixed(3)+"b"+(bt>0.001?"1":"0");
   if (noiseCache.key === key) return noiseCache.f;
+  // まとまりの濃淡は現像の density ムラなので、3色で共通の1枚を使う
+  const co = sp > 0.001 ? noiseField(w, h, s*OCT_COARSE, 307, yOff, cl) : null;
   const f = {
-    m: spreadField(w,h,s,11,yOff,cl,sp),
-    r: spreadField(w,h,s,23,yOff,cl,sp),
-    g: spreadField(w,h,s,47,yOff,cl,sp),
-    b: spreadField(w,h,s,71,yOff,cl,sp),
+    m: spreadField(w,h,s,11,yOff,cl,sp,co),
+    r: spreadField(w,h,s,23,yOff,cl,sp,co),
+    g: spreadField(w,h,s,47,yOff,cl,sp,co),
+    b: spreadField(w,h,s,71,yOff,cl,sp,co),
     dx: bt>0.001 ? noiseField(w,h,s,131,yOff,cl) : null,
     dy: bt>0.001 ? noiseField(w,h,s,197,yOff,cl) : null
   };
