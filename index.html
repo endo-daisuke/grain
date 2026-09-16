@@ -388,10 +388,11 @@ window.addEventListener("error", e => showNote("エラー\n" + (e.message || e))
 /* ---------- 版 ----------
    どの index.html が動いているかを画面から判別するための印。
    差し替えるたびにここの数字を上げる */
-const BUILD = "2026-09-15 h";
+const BUILD = "2026-09-15 i";
 (function(){
   const v = document.getElementById("ver");
   if (v) v.textContent = BUILD;
+  updateSaveButtonLabel();
 })();
 
 /* ---------- 曲線LUT ---------- */
@@ -761,10 +762,16 @@ function isIOSDevice(){
   return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
          (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 }
+/* 共有シートで写真アプリに入れられるのはモバイルだけ。
+   PC は a[download] のほうが確実で、保存先も選べる */
+function isMobileLike(){
+  return isIOSDevice() || /Android/i.test(navigator.userAgent);
+}
+function saveLabel(){ return isMobileLike() ? "写真に保存" : "画像を書き出す"; }
 function updateSaveButtonLabel(){
   const btn = document.getElementById("b-save");
   if (!btn) return;
-  btn.textContent = "写真に保存";
+  btn.textContent = saveLabel();
 }
 function revokeThumbs(){
   thumbURLs.forEach(u => URL.revokeObjectURL(u));
@@ -1399,10 +1406,38 @@ function showSaveDiag(file, headline){
   showNote(lines.join("\n"));
 }
 
+/* 保存の入口。PC はダウンロード、モバイルは共有シート。
+   どちらも駄目なときだけ最後の手段に落とす */
+function deliver(file, isFirstTry){
+  if (!isMobileLike()){
+    if (tryDownload(file, file.name)){
+      dg("ダウンロード開始");
+      hideNote();
+      setSaveLabel(saveLabel());
+      return;
+    }
+    dg("a[download] が使えなかった");
+    if (navigator.share) { shareNow(file, isFirstTry); return; }
+    showSaveDiag(file, "ダウンロードを開始できませんでした。");
+    return;
+  }
+  shareNow(file, isFirstTry);
+}
+
+/* モバイル向け。駄目なときはダウンロードに落とす（iOS ならファイルアプリに入る） */
+function lastResort(file, headline){
+  if (tryDownload(file, file.name)){
+    dg("共有が駄目だったのでダウンロードに変更");
+    showNote("共有シートが使えなかったので、ファイルとして保存しました。\n写真アプリに入れる場合はファイルアプリから共有してください。");
+    return;
+  }
+  showSaveDiag(file, headline);
+}
+
 function shareNow(file, isFirstTry){
   if (!navigator.share){
     dg("navigator.share が無い");
-    fallbackSavePreview(file, null);
+    lastResort(file, "この環境では共有シートが使えません。");
     return;
   }
   if (navigator.canShare){
@@ -1411,7 +1446,7 @@ function shareNow(file, isFirstTry){
     catch(e){ dg("canShare で例外 " + (e.name || e)); }
     if (!ok){
       dg("canShare({files}) が false");
-      showSaveDiag(file, "この環境は画像の共有に対応していないようです。");
+      lastResort(file, "この環境は画像の共有に対応していないようです。");
       return;
     }
   }
@@ -1421,18 +1456,18 @@ function shareNow(file, isFirstTry){
     p = navigator.share({files:[file]});
   } catch(e){
     dg("share() が同期的に例外 " + (e.name || "") + " " + (e.message || e));
-    if (isFirstTry){ armSecondTap(file); } else { showSaveDiag(file, "共有シートを開けませんでした。"); }
+    if (isFirstTry){ armSecondTap(file); } else { lastResort(file, "共有シートを開けませんでした。"); }
     return;
   }
 
   p.then(() => {
     dg("share 成功");
     hideNote();
-    setSaveLabel("写真に保存");
+    setSaveLabel(saveLabel());
   }).catch(e => {
-    if (e && e.name === "AbortError"){ hideNote(); setSaveLabel("写真に保存"); return; }
+    if (e && e.name === "AbortError"){ hideNote(); setSaveLabel(saveLabel()); return; }
     dg("share 失敗 " + (e.name || "") + " " + (e.message || e));
-    if (isFirstTry){ armSecondTap(file); } else { showSaveDiag(file, "共有シートを開けませんでした。"); }
+    if (isFirstTry){ armSecondTap(file); } else { lastResort(file, "共有シートを開けませんでした。"); }
   });
 }
 
@@ -1448,7 +1483,7 @@ saveBtn().onclick = async () => {
   // 準備済みなら await を一切挟まずそのまま共有シートへ
   if (preparedExport && preparedExport.key === key){
     dg("準備済みを同期で共有");
-    shareNow(preparedExport.file, false);
+    deliver(preparedExport.file, false);
     return;
   }
 
@@ -1472,11 +1507,11 @@ saveBtn().onclick = async () => {
     return;
   }
   btn.disabled = false;
-  setSaveLabel("写真に保存");
+  setSaveLabel(saveLabel());
 
   dg("加工 " + ((Date.now()-t0)/1000).toFixed(1) + "秒");
   preparedExport = {key, file:f};
-  shareNow(f, true);
+  deliver(f, true);
 };
 
 /* ---------- 画像読み込み ---------- */
