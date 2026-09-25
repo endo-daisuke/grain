@@ -35,6 +35,7 @@
     padding:9px 14px;background:#232323;border-bottom:1px solid #1b1b1b
   }
   header .brand{font-size:13px;font-weight:600;white-space:nowrap}
+  header .brand #ver{color:var(--mark);font-weight:400;font-size:11px;margin-left:4px}
   header .acts{display:flex;gap:6px}
   header button{padding:7px 13px}
   .body{flex:1;display:flex;min-height:0}
@@ -71,6 +72,35 @@
   .curve{background:var(--panel-2);border:1px solid var(--line);padding:8px 6px 4px}
   .curve svg{display:block;width:100%;height:auto}
   .caption{font-size:11px;color:var(--ink-dim);margin-top:7px;line-height:1.45}
+  .preset-list{display:flex;flex-direction:column;gap:8px}
+  .preset-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px;border:1px solid var(--line);background:var(--panel-2)}
+  .preset-row .meta{min-width:0}
+  .preset-row .name{font-size:12px;font-weight:600}
+  .preset-row .sub{font-size:10px;color:var(--ink-dim);margin-top:2px}
+  .preset-row .btns{flex-wrap:nowrap}
+  .preset-row button{padding:6px 9px}
+  .thumb-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:10px}
+  .thumb{display:flex;align-items:center;gap:8px;width:100%;padding:6px;background:var(--panel-2);border:1px solid var(--line);text-align:left}
+  .thumb.current{border-color:var(--mark);box-shadow:inset 0 0 0 1px var(--mark)}
+  .thumb img{width:54px;height:54px;object-fit:cover;display:block;background:#111;flex:0 0 auto}
+  .thumb .meta{min-width:0;display:flex;flex-direction:column;gap:2px}
+  .thumb .idx{font-size:10px;color:var(--mark)}
+  .thumb .name{font-size:11px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .export-gallery{display:flex;flex-direction:column;gap:10px;min-width:min(76vw,420px)}
+  .export-gallery-head{font-size:14px;font-weight:600;margin-bottom:2px}
+  .export-gallery-sub{font-size:11px;color:var(--ink-dim);margin-bottom:4px}
+  .export-item{display:grid;grid-template-columns:76px minmax(0,1fr);gap:10px;align-items:center;padding:8px;border:1px solid var(--line);background:#252525}
+  .export-item img{width:76px;height:76px;object-fit:cover;display:block;margin:0;border:none;background:#111}
+  .export-item .meta{min-width:0}
+  .export-item .file-name{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:7px}
+  .export-item .save-one{width:100%;background:var(--mark);border-color:var(--mark);color:#221a0e;font-weight:600}
+  .export-gallery-close{width:100%;margin-top:2px}
+  .save-preview{position:fixed;inset:0;z-index:1000;background:#111;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px;gap:12px}
+  .save-preview .guide{color:#fff;font-size:14px;font-weight:600;text-align:center;line-height:1.6}
+  .save-preview .guide small{display:block;color:#bbb;font-size:11px;font-weight:400;margin-top:4px}
+  .save-preview .image-wrap{flex:1;min-height:0;width:100%;display:flex;align-items:center;justify-content:center;overflow:auto;-webkit-overflow-scrolling:touch}
+  .save-preview img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;-webkit-touch-callout:default;user-select:auto}
+  .save-preview .close-save-preview{width:min(420px,100%);padding:12px}
 
   main{flex:1;position:relative;overflow:hidden;background:var(--surround);touch-action:none}
   #stage{position:absolute;top:0;left:0;transform-origin:0 0;touch-action:none}
@@ -142,10 +172,10 @@
 <body>
 
 <header>
-  <div class="brand">グレイン合わせ台</div>
+  <div class="brand">グレイン合わせ台 <span id="ver">v—</span></div>
   <div class="acts">
     <button id="b-open">写真を開く</button>
-    <button id="b-save">書き出す</button>
+    <button id="b-save">写真に保存</button>
     <button id="b-fmt" title="書き出し形式を切り替え">PNG</button>
     <button id="b-reset">実測値に戻す</button>
   </div>
@@ -154,18 +184,16 @@
 <div class="body">
 <aside>
   <div class="head">
-    <p>実測したフィルムスキャンから校正<br><span class="num" style="opacity:.6">build 09/25 22:49</span></p>
+    <p>実測したフィルムスキャンから校正</p>
   </div>
 
   <section>
-    <h2>実測データ</h2>
-    <div class="btns">
-      <button id="p-minilab" class="on">ミニラボ 35mm</button>
-      <button id="p-frontier6k">フロンティア 6K</button>
-      <button id="p-drum">ドラム 中判</button>
-    </div>
-    <p class="caption" id="p-note"></p>
+    <input type="file" id="file" accept="image/*" hidden multiple>
+    <p class="caption" id="queue-meta">最大5枚まで選択できます。現在の設定は選択した画像すべてに一括適用されます。</p>
+    <div class="thumb-strip" id="thumb-strip"></div>
+    <p class="caption" id="status">読み込み中…</p>
   </section>
+
 
   <section>
     <h2>グレイン</h2>
@@ -175,7 +203,7 @@
     </div>
     <div class="ctl">
       <div class="row"><label for="s-size">粒径</label><span class="val num" id="v-size">1.19</span></div>
-      <input type="range" id="s-size" min="0.6" max="5" value="1.19" step="0.01">
+      <input type="range" id="s-size" min="0.2" max="5" value="1.19" step="0.01">
       <label class="check" style="margin-top:6px">
         <input type="checkbox" id="c-scale">
         粒径を画像の横幅で換算する
@@ -184,26 +212,13 @@
     <div class="ctl">
       <div class="row"><label for="s-clump">粒のまとまり</label><span class="val num" id="v-clump">100%</span></div>
       <input type="range" id="s-clump" min="0" max="100" value="100" step="1">
-    </div>
-    <div class="ctl">
-      <div class="row"><label for="s-fine">細かさ</label><span class="val num" id="v-fine">0%</span></div>
-      <input type="range" id="s-fine" min="0" max="70" value="0" step="1">
-    </div>
-    <div class="ctl">
-      <div class="row"><label for="s-dens">粒のムラ</label><span class="val num" id="v-dens">0%</span></div>
-      <input type="range" id="s-dens" min="0" max="80" value="0" step="1">
-    </div>
-    <div class="ctl">
-      <div class="row"><label for="s-skew">濃度の偏り</label><span class="val num" id="v-skew">0%</span></div>
-      <input type="range" id="s-skew" min="0" max="30" value="0" step="1">
-    </div>
-    <div class="ctl">
-      <div class="row"><label for="s-aniso">横伸び</label><span class="val num" id="v-aniso">1.00</span></div>
-      <input type="range" id="s-aniso" min="1" max="3" value="1" step="0.05">
-    </div>
-    <p class="caption">細かさは高い周波数の成分、粒のムラは濃さの揺らぎ（実測の尖度 +0.3〜+1.0 を作る）、
-    濃度の偏りは暗部で上・明部で下に裾を引かせる非対称。横伸びはフロンティアのラボスキャン特有のにじみです。</p>
 
+      <div class="row"><label for="s-spread">粒のばらつき</label><span class="val num" id="v-spread">55%</span></div>
+      <input type="range" id="s-spread" min="0" max="100" value="55" step="1">
+
+      <div class="row"><label for="s-bite">境目の食い込み</label><span class="val num" id="v-bite">35%</span></div>
+      <input type="range" id="s-bite" min="0" max="100" value="35" step="1">
+    </div>
     <div class="ctl">
       <div class="row"><label for="s-chroma">色の独立度</label><span class="val num" id="v-chroma">40%</span></div>
       <input type="range" id="s-chroma" min="0" max="100" value="40" step="1">
@@ -246,6 +261,43 @@
     大きさは対数正規、まれに引っかき傷が混じります。</p>
   </section>
 
+  <section>
+    <h2>マイプリセット</h2>
+    <div class="preset-list">
+      <div class="preset-row">
+        <div class="meta">
+          <div class="name">プリセット 1</div>
+          <div class="sub" id="user-preset-meta-1">未保存</div>
+        </div>
+        <div class="btns">
+          <button id="user-preset-load-1">適用</button>
+          <button id="user-preset-save-1">保存</button>
+        </div>
+      </div>
+      <div class="preset-row">
+        <div class="meta">
+          <div class="name">プリセット 2</div>
+          <div class="sub" id="user-preset-meta-2">未保存</div>
+        </div>
+        <div class="btns">
+          <button id="user-preset-load-2">適用</button>
+          <button id="user-preset-save-2">保存</button>
+        </div>
+      </div>
+      <div class="preset-row">
+        <div class="meta">
+          <div class="name">プリセット 3</div>
+          <div class="sub" id="user-preset-meta-3">未保存</div>
+        </div>
+        <div class="btns">
+          <button id="user-preset-load-3">適用</button>
+          <button id="user-preset-save-3">保存</button>
+        </div>
+      </div>
+    </div>
+    <p class="caption">現在の調整値を保存して、複数画像への一括適用にすぐ再利用できます。</p>
+  </section>
+
 
   <section>
     <h2>輝度とグレイン量</h2>
@@ -262,10 +314,6 @@
     </div>
   </section>
 
-  <section>
-    <input type="file" id="file" accept="image/*" hidden>
-    <p class="caption" id="status">読み込み中…</p>
-  </section>
 </aside>
 
 <main id="main">
@@ -301,9 +349,8 @@ const CURVE_CHANNEL  = [0.857,0.891,0.924,0.953,0.982,0.991,1.000,0.981,0.962,
 const PRESETS = {
   minilab: {
     label:"ミニラボ 35mm",
-    note:"フロンティア355/375スキャン6枚。1818pxでは粒がほぼ1画素まで潰れていて、相関 +0.12・尖度 +0.31。色は測定不能なので均等。",
-    curve:CURVE_MINILAB, peak:8.72, size:0.60, clump:0.65,
-    fine:0.20, dens:0.15, skew:0.05, aniso:1.0,
+    note:"かにさんのフロンティア355/375スキャン6枚。輝度カーブは実測、色は測定不能だったため均等。",
+    curve:CURVE_MINILAB, peak:8.72, size:1.19, clump:1,
     perChannel:false, indep:0.06, wR:1.00, wG:1, wB:1.00,
     measured:[[8,2.35],[24,4.87],[40,7.60],[56,8.27],[72,8.92],[88,9.08],[104,7.48],
               [120,6.96],[136,7.63],[152,7.15],[168,6.75],[184,6.10],[200,5.33],
@@ -311,17 +358,15 @@ const PRESETS = {
   },
   frontier6k: {
     label:"フロンティア 6K",
-    note:"同じフロンティアの6Kスキャン、カラーチャート24パッチ実測。σは各チャンネル自身の値で決まる。横の相関が縦の1.23倍あり、これはスキャナ由来なので横伸びで再現。",
-    curve:CURVE_CHANNEL, peak:6.08, size:1.60, clump:0.90,
-    fine:0.30, dens:0.55, skew:0.10, aniso:1.8,
+    note:"同じフロンティアの6Kスキャン、カラーチャート24パッチ実測。σは画面の明るさではなく各チャンネル自身の値で決まる。",
+    curve:CURVE_CHANNEL, peak:6.08, size:2.40, clump:1,
     perChannel:true, indep:0.63, wR:1.09, wG:1, wB:1.50,
     measured:[[16,5.45],[48,5.80],[80,6.05],[112,6.00],[144,5.50],[176,4.80],[208,4.10],[240,3.50]]
   },
   drum: {
     label:"ドラム 中判",
-    note:"Portra 400・6×7のドラムスキャン実測。完全に等方で、フィルム本来の粒に最も近い。相関 +0.70 +0.31 +0.04 −0.07、尖度 +0.98。カーブの形はフロンティア6Kから借りている。",
-    curve:CURVE_CHANNEL, peak:6.08, size:1.80, clump:1.0,
-    fine:0.36, dens:0.37, skew:0.14, aniso:1.0,
+    note:"Portra 400・6×7のドラムスキャン実測。粒の比と相関はここから、カーブの形はフロンティア6Kから借りている。",
+    curve:CURVE_CHANNEL, peak:6.08, size:2.60, clump:1,
     perChannel:true, indep:0.85, wR:1.27, wG:1, wB:1.83,
     measured:[[48,6.55],[112,9.06],[176,5.56],[208,4.12]]
   }
@@ -337,23 +382,18 @@ const note = document.getElementById("note");
 function showNote(msg){ note.textContent = msg; note.classList.add("show"); }
 function showNoteHTML(html){ note.innerHTML = html; note.classList.add("show"); }
 function hideNote(){ note.classList.remove("show"); }
-let booted = false;
-function reportError(msg, where){
-  const txt = "エラー\n" + msg + (where ? "\n" + where : "");
-  if (!booted){ showNote(txt); return; }          // 起動前なら致命的なので大きく出す
-  const st = document.getElementById("status");   // 起動後は隅に控えめに出すだけ
-  if (st) st.textContent = txt.replace(/\n/g, " / ");
-  console.error(msg, where);
-}
-window.addEventListener("error", e => {
-  // 別ドメインのスクリプト由来だと中身が伏せられ "Script error." としか出ない。
-  // 動いている最中のこれは無害なことが多いので、画面を覆わない
-  const where = e.filename ? (e.filename.split("/").pop() + ":" + e.lineno + ":" + e.colno) : "";
-  reportError(e.message || String(e), where);
-});
-window.addEventListener("unhandledrejection", e => {
-  reportError("未処理の拒否: " + (e.reason && e.reason.message ? e.reason.message : e.reason), "");
-});
+window.addEventListener("error", e => showNote("エラー\n" + (e.message || e)));
+
+
+/* ---------- 版 ----------
+   どの index.html が動いているかを画面から判別するための印。
+   差し替えるたびにここの数字を上げる */
+const BUILD = "2026-09-15 i";
+(function(){
+  const v = document.getElementById("ver");
+  if (v) v.textContent = BUILD;
+  updateSaveButtonLabel();
+})();
 
 /* ---------- 曲線LUT ---------- */
 let LUT = new Float32Array(256);
@@ -413,34 +453,21 @@ function arGrid(gw, gy0, gh, seed, clump){
   return g;
 }
 
-function rawField(w, h, s, seed, yOff, clump, aniso){
-  // 粒径が画素より細かいと格子を作る意味がない（補間しても白色雑音のまま）。
-  // 直接引けば格子ぶんの確保と走査が丸ごと消える
-  if (s < 0.62 && clump === 0){
-    const out = new Float32Array(w*h);
-    for (let y=0; y<h; y++){
-      const gy = y + yOff, o = y*w;
-      for (let x=0; x<w; x++) out[o+x] = gaussAt(x, gy, seed);
-    }
-    return out;
-  }
-  // aniso>1 で横方向に伸びる。フロンティアのラボスキャンは
-  // 横の相関が縦より 1.23 倍高い（センサー列方向のにじみ）
-  const ax = aniso === undefined ? S.aniso : aniso;
-  const invx = 1/(s*ax), invy = 1/s;
-  const gy0 = Math.floor(yOff*invy), gy1 = Math.floor((yOff+h-1)*invy)+1;
-  const gh = gy1-gy0+1, gw = Math.ceil(w*invx)+2;
+function rawField(w, h, s, seed, yOff, clump){
+  const inv = 1/s;
+  const gy0 = Math.floor(yOff*inv), gy1 = Math.floor((yOff+h-1)*inv)+1;
+  const gh = gy1-gy0+1, gw = Math.ceil(w*inv)+2;
   const g = arGrid(gw, gy0, gh, seed, clump);
 
   const ix = new Int32Array(w), fx = new Float32Array(w);
   for (let x=0; x<w; x++){
-    const t = x*invx, i = Math.floor(t);
+    const t = x*inv, i = Math.floor(t);
     let f = t-i; f = f*f*(3-2*f);
     ix[x] = i; fx[x] = f;
   }
   const out = new Float32Array(w*h);
   for (let y=0; y<h; y++){
-    const t = (y+yOff)*invy, fl = Math.floor(t), iy = fl-gy0+AR_WARM;
+    const t = (y+yOff)*inv, fl = Math.floor(t), iy = fl-gy0+AR_WARM;
     let fy = t-fl; fy = fy*fy*(3-2*fy);
     const r0 = iy*gw, r1 = (iy+1)*gw, o = y*w;
     for (let x=0; x<w; x++){
@@ -456,10 +483,9 @@ function rawField(w, h, s, seed, yOff, clump, aniso){
    帯ごとに測ると倍率がずれて継ぎ目になるので、必ずこの共通値を使う */
 const sigCache = {};
 function fieldSigma(s, clump){
-  const key = s.toFixed(3)+"/"+clump.toFixed(3)+"/"+S.aniso.toFixed(3);
+  const key = s.toFixed(3)+"/"+clump.toFixed(3);
   if (sigCache[key]) return sigCache[key];
-  const n = Math.max(192, Math.min(384, Math.round(s*28)));
-  const f = rawField(n, n, s, 9991, 0, clump, S.aniso);
+  const f = rawField(192, 192, s, 9991, 0, clump);
   let m = 0; for (let i=0;i<f.length;i++) m += f[i]; m /= f.length;
   let q = 0; for (let i=0;i<f.length;i++){ const d = f[i]-m; q += d*d; }
   const sd = Math.sqrt(q/f.length) || 1;
@@ -534,8 +560,8 @@ function getDust(w, h, yOff){
 const S = {
   amount:1, size:1.19, chroma:.40, follow:1,
   clump:1, wR:1, wG:1, wB:1, perChannel:false, preset:'minilab',
-  fine:0, dens:0, skew:0, aniso:1,
   dust:0, dustSize:1, fmt:'png',
+  spread:.55, bite:.35,
   autoScale:false, view:"split", zoom:1, panX:0, panY:0, split:.5,
   hasReal:true, w:0, h:0, previewScale:1, fullW:0
 };
@@ -546,80 +572,115 @@ const ctx = cv.getContext("2d", {willReadFrequently:false});
 let basePix = null, realPix = null, outImg = null;
 let fullBaseCanvas = null;          // 書き出し用の原寸
 let noiseCache = {key:"", f:null};
+let userFiles = [];
+let currentFileIndex = -1;
+let thumbURLs = [];
+let loadUserToken = 0;
+let exportResultURLs = [];
+
+const MAX_BATCH_FILES = 5;
+const USER_PRESET_KEY = "grain_user_presets_v1";
 
 function grainPxFull(){
   return S.autoScale ? S.size * (S.fullW / REF_WIDTH) : S.size;
 }
+const GRAIN_FLOOR = 0.20;   // これ以下はピクセルより細かく、見た目が変わらない
 function grainPxWork(){
-  return Math.max(0.35, grainPxFull() * S.previewScale) + 0.013;
+  return Math.max(GRAIN_FLOOR, grainPxFull() * S.previewScale) + 0.013;
 }
 
-const BAND_BUDGET = 4e6;   // 一度に確保するノイズの上限画素数
-const SEED_M=11, SEED_R=23, SEED_G=47, SEED_B=71;
-const SEED_MF=313, SEED_RF=331, SEED_GF=349, SEED_BF=367, SEED_DENS=137;
+const BAND_BUDGET = 1e6;   // ノイズ格子の上限。4e6だと格子だけで60MB超になる
+const OCT_COARSE = 2.2;
+/* acc*m + co*wA の分散。m=1+mA*(|co|-0.7979) で co は分散1。
+   E[m^2] = 1 + mA^2*Var(|N|) = 1 + mA^2*(1-0.7979^2) を使う */
+function SPREAD_NORM(sp){
+  const mA = sp*0.90;
+  return 1/Math.sqrt(1 + mA*mA*(1 - 0.7979*0.7979));
+}
 
-/* 実測との差を埋めるための2つの合成。
-   1. 微細成分: 実フィルムは 0.3〜0.7×ナイキストにも力が残る。
-      粗い粒だけだとそこが抜け落ちて、のっぺりする。
-   2. 振幅のムラ: 実フィルムの尖度は +1.3〜+2.6（合成は +0.06）。
-      粒の濃さ自体がゆっくり揺らぐので、まばらに濃い塊ができる。
-      対数正規の振幅場 A=exp(σz-σ²) を掛けると E[A²]=1 のまま
-      尖度だけ 3(exp(4σ²)-1) だけ上がる。 */
+/* 粒径のばらつき。実フィルムは結晶サイズに分布があるので、
+   細かい・基準・粗いの3層を重ねる。単一格子だと「同じ粒が整列している」
+   質感になり、これが規則的に見える原因になる。
+   合成後も分散が1になるよう重みを正規化する */
+function spreadField(w, h, s, seed, yOff, clump, sp, co){
+  const acc = noiseField(w, h, s, seed, yOff, clump);
+  if (sp <= 0.001 || !co) return acc;
+  // 粗い場は「振幅を揺らす」だけに使う。足し込むと粒そのものが大きくなり、
+  // 形が変わってしまう。co は全チャンネル共通なので色の斑も出ない
+  const mA = sp*0.90, norm = SPREAD_NORM(sp);
+  for (let i=0;i<acc.length;i++){
+    acc[i] *= (1 + mA*(Math.abs(co[i]) - 0.7979)) * norm;   // |N(0,1)| の平均は 0.7979
+  }
+  return acc;
+}
+
 function getNoise(w, h, s, yOff){
-  const cl = S.clump, fm = S.fine, dn = S.dens;
+  const cl = S.clump, sp = S.spread, bt = S.bite;
   const key = w+"x"+h+"@"+s.toFixed(3)+"+"+yOff+"c"+cl.toFixed(3)
-            + "f"+fm.toFixed(3)+"d"+dn.toFixed(3)+"a"+S.aniso.toFixed(3);
+            + "s"+sp.toFixed(3)+"b"+(bt>0.001?"1":"0");
   if (noiseCache.key === key) return noiseCache.f;
-
+  // まとまりの濃淡は現像の density ムラなので、3色で共通の1枚を使う
+  const co = sp > 0.001 ? noiseField(w, h, s*OCT_COARSE, 307, yOff, cl) : null;
   const f = {
-    m: noiseField(w,h,s,SEED_M,yOff,cl),
-    r: noiseField(w,h,s,SEED_R,yOff,cl),
-    g: noiseField(w,h,s,SEED_G,yOff,cl),
-    b: noiseField(w,h,s,SEED_B,yOff,cl)
+    m: spreadField(w,h,s,11,yOff,cl,sp,co),
+    r: spreadField(w,h,s,23,yOff,cl,sp,co),
+    g: spreadField(w,h,s,47,yOff,cl,sp,co),
+    b: spreadField(w,h,s,71,yOff,cl,sp,co),
+    dx: bt>0.001 ? noiseField(w,h,s,131,yOff,cl) : null,
+    dy: bt>0.001 ? noiseField(w,h,s,197,yOff,cl) : null
   };
-
-  if (fm > 0){
-    const sf = Math.max(0.42, s*0.42);
-    const a = Math.sqrt(1-fm*fm);
-    const seeds = {m:SEED_MF, r:SEED_RF, g:SEED_GF, b:SEED_BF};
-    for (const k in seeds){
-      const fi = noiseField(w,h,sf,seeds[k],yOff,0), dst = f[k];
-      for (let i=0;i<dst.length;i++) dst[i] = a*dst[i] + fm*fi[i];
-    }
-  }
-
-  if (dn > 0){
-    const A = noiseField(w,h,Math.max(2,s*6),SEED_DENS,yOff,0);
-    const off = dn*dn;
-    for (let i=0;i<A.length;i++) A[i] = Math.exp(dn*A[i] - off);
-    for (const k of ["m","r","g","b"]){
-      const dst = f[k];
-      for (let i=0;i<dst.length;i++) dst[i] *= A[i];
-    }
-  }
-
   noiseCache = {key, f};
   return f;
 }
 
 /* ---------- 本体 ---------- */
-function apply(srcPix, w, h, sizePx, splitPx, realSrc){
-  const out = new Uint8ClampedArray(srcPix.length);
-  const bandH = Math.max(1, Math.min(h, Math.floor(BAND_BUDGET / w)));
+/* dst を渡すとそこに書く。srcPix と同一でもよい（同じ添字しか読まないので安全）。
+   これで原寸1枚分のバッファが丸ごと1枚浮く */
+function apply(srcPix, w, h, sizePx, splitPx, realSrc, dst){
+  const out = dst || new Uint8ClampedArray(srcPix.length);
+
+  const bandPx = Math.min(BAND_BUDGET, Math.max(1, BAND_BUDGET * sizePx * sizePx));
+  const bandH = Math.max(1, Math.min(h, Math.floor(bandPx / w)));
+
   const t = S.chroma;                    // 0=3色共通の粒  1=完全に独立
   const a0 = Math.sqrt(1-t*t), a1 = t;   // これで合成後も分散1のまま
   const wR = S.wR, wG = S.wG, wB = S.wB;
   const base = S.amount * (PEAK_SIGMA/255) * 255;   // 8bit空間で扱う
   const flat = 1 - S.follow;
   const grainOnly = S.view === "grain";
-
   const perCh = S.perChannel;
-  const sk = S.skew;          // 実測: 暗部で正、明部で負に歪む
+
+  // 参照位置のずらし量。粒1個ぶん前後まで動かすと
+  // 平坦部は変わらないまま境目だけが粒の形に刻まれる
+  const dAmp = S.bite > 0.001 ? sizePx * S.bite * 1.4 : 0;
+
+  // in-place のときは上の行が既に書き換わっているので
+  // 参照用に帯ぶんだけ原本を持つ（帯は1e6画素までなので数MB）
+  const aliased = (out === srcPix);
+  const mg = dAmp > 0 ? Math.ceil(dAmp)+1 : 0;
+  let bandSrc = null, prevTail = null;
+  if (dAmp > 0 && aliased) bandSrc = new Uint8ClampedArray((bandH + 2*mg) * w * 4);
 
   for (let y0=0; y0<h; y0+=bandH){
   const bh = Math.min(bandH, h-y0);
   const N = getNoise(w, bh, sizePx, y0);
   const D = S.dust > 0 ? getDust(w, bh, y0) : null;
+
+  let SRC = srcPix, srcTop = 0, srcBot = h;
+  if (bandSrc){
+    const top = Math.max(0, y0-mg), bot = Math.min(h, y0+bh+mg);
+    if (y0 > top){
+      const head = (y0-top)*w*4;
+      if (prevTail && prevTail.length >= head) bandSrc.set(prevTail.subarray(prevTail.length-head), 0);
+      else bandSrc.set(srcPix.subarray(top*w*4, y0*w*4), 0);
+    }
+    bandSrc.set(srcPix.subarray(y0*w*4, bot*w*4), (y0-top)*w*4);
+    const ts = Math.max(top, y0+bh-mg);
+    prevTail = bandSrc.slice((ts-top)*w*4, (Math.min(bot, y0+bh)-top)*w*4);
+    SRC = bandSrc; srcTop = top; srcBot = bot;
+  }
+  const maxY = srcBot - srcTop - 1;
+
   for (let y=y0; y<y0+bh; y++){
     const row = y*w, nrow = (y-y0)*w;
     for (let x=0; x<w; x++){
@@ -630,11 +691,26 @@ function apply(srcPix, w, h, sizePx, splitPx, realSrc){
         continue;
       }
 
-      let r = srcPix[i], g = srcPix[i+1], b = srcPix[i+2];
+      let r, g, b;
+      if (dAmp > 0){
+        let sx = x + N.dx[np]*dAmp;
+        let sy = (y - srcTop) + N.dy[np]*dAmp;
+        if (sx < 0) sx = 0; else if (sx > w-1.001) sx = w-1.001;
+        if (sy < 0) sy = 0; else if (sy > maxY-0.001) sy = maxY-0.001;
+        const xi = sx|0, yi = sy|0, fx = sx-xi, fy = sy-yi;
+        const o00 = (yi*w + xi)*4, o10 = o00+4, o01 = o00+w*4, o11 = o01+4;
+        const gx = 1-fx, gy = 1-fy;
+        r = (SRC[o00]*gx + SRC[o10]*fx)*gy + (SRC[o01]*gx + SRC[o11]*fx)*fy;
+        g = (SRC[o00+1]*gx + SRC[o10+1]*fx)*gy + (SRC[o01+1]*gx + SRC[o11+1]*fx)*fy;
+        b = (SRC[o00+2]*gx + SRC[o10+2]*fx)*gy + (SRC[o01+2]*gx + SRC[o11+2]*fx)*fy;
+      } else {
+        r = srcPix[i]; g = srcPix[i+1]; b = srcPix[i+2];
+      }
 
-      let gr = (a0*N.m[np] + a1*N.r[np]) * wR;
-      let gg = (a0*N.m[np] + a1*N.g[np]) * wG;
-      let gb = (a0*N.m[np] + a1*N.b[np]) * wB;
+      const nm = a0*N.m[np];
+      const gr = (nm + a1*N.r[np]) * wR;
+      const gg = (nm + a1*N.g[np]) * wG;
+      const gb = (nm + a1*N.b[np]) * wB;
 
       // フロンティア6Kの24パッチ実測より、σは画面の明るさより
       // そのチャンネル自身の値でよく決まる（相関 -0.411 対 -0.304）
@@ -648,15 +724,6 @@ function apply(srcPix, w, h, sizePx, splitPx, realSrc){
         const L = (r+g+b)/3;
         const li = L < 0 ? 0 : L > 255 ? 255 : L|0;
         aR = aG = aB = (LUT[li]*S.follow + flat) * base;
-      }
-      if (sk !== 0){
-        // h = (g + k(g²-1)) / √(1+2k²) は分散を保ったまま歪度 ≈ 6k を与える。
-        // k の符号を明るさで反転させ、暗部は上に、明部は下に裾を引かせる
-        const kb = sk * (0.66 - (r+g+b)/765);
-        const nz = 1/Math.sqrt(1 + 2*kb*kb);
-        gr = (gr + kb*(gr*gr-1))*nz;
-        gg = (gg + kb*(gg*gg-1))*nz;
-        gb = (gb + kb*(gb*gb-1))*nz;
       }
       const dv = D ? D[np] : 0;
 
@@ -690,6 +757,100 @@ function render(){
     layout();
   });
 }
+
+function isIOSDevice(){
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+         (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+}
+/* 共有シートで写真アプリに入れられるのはモバイルだけ。
+   PC は a[download] のほうが確実で、保存先も選べる */
+function isMobileLike(){
+  return isIOSDevice() || /Android/i.test(navigator.userAgent);
+}
+function saveLabel(){ return isMobileLike() ? "写真に保存" : "画像を書き出す"; }
+function updateSaveButtonLabel(){
+  const btn = document.getElementById("b-save");
+  if (!btn) return;
+  btn.textContent = saveLabel();
+}
+function revokeThumbs(){
+  thumbURLs.forEach(u => URL.revokeObjectURL(u));
+  thumbURLs = [];
+}
+function refreshThumbs(){
+  const strip = document.getElementById("thumb-strip");
+  if (!strip) return;
+  revokeThumbs();
+  strip.innerHTML = "";
+  if (!userFiles.length) return;
+  userFiles.forEach((file, idx) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "thumb" + (idx === currentFileIndex ? " current" : "");
+    b.addEventListener("click", () => { if (idx !== currentFileIndex) selectBatchIndex(idx); });
+    const im = document.createElement("img");
+    const u = URL.createObjectURL(file);
+    thumbURLs.push(u);
+    im.src = u;
+    im.alt = file.name;
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    const idxEl = document.createElement("span");
+    idxEl.className = "idx";
+    idxEl.textContent = `${idx+1} / ${userFiles.length}`;
+    const nameEl = document.createElement("span");
+    nameEl.className = "name";
+    nameEl.textContent = file.name;
+    meta.append(idxEl, nameEl);
+    b.append(im, meta);
+    strip.appendChild(b);
+  });
+}
+function updateQueueMeta(extra){
+  const meta = document.getElementById("queue-meta");
+  if (!meta) return;
+  if (!userFiles.length){
+    meta.textContent = "最大5枚まで選択できます。現在の設定は選択した画像すべてに一括適用されます。";
+    return;
+  }
+  meta.textContent = `${userFiles.length}枚選択中。現在の調整値はすべての画像に一括適用されます。サムネイルをタップすると個別にプレビューできます。` + (extra ? ` ${extra}` : "");
+}
+function setUserStatus(message){
+  const st = document.getElementById("status");
+  if (st) st.textContent = message;
+}
+function updateLoadedStatus(file, via, iw, ih){
+  const prefix = userFiles.length ? `${userFiles.length}枚選択中 / ${currentFileIndex+1}枚目: ${file.name}` : file.name;
+  setUserStatus(
+    prefix + " / " + iw + "×" + ih + "（" + via + "）。粒径は原寸で " +
+    grainPxFull().toFixed(2) + "px 相当。プレビューは " + S.w +
+    "px 幅の縮小版で、書き出しは原寸で計算します。"
+  );
+  updateQueueMeta();
+  updateSaveButtonLabel();
+  refreshThumbs();
+}
+async function selectBatchIndex(idx){
+  if (idx < 0 || idx >= userFiles.length) return;
+  currentFileIndex = idx;
+  refreshThumbs();
+  await loadUser(userFiles[idx]);
+}
+async function setBatchFiles(files){
+  const list = Array.from(files || []).filter(f => f && ((f.type || "").startsWith("image/") || /\.(jpe?g|png|webp|heic|heif)$/i.test(f.name)));
+  if (!list.length) return;
+  const clipped = list.slice(0, MAX_BATCH_FILES);
+  userFiles = clipped;
+  currentFileIndex = 0;
+  refreshThumbs();
+  updateQueueMeta(list.length > MAX_BATCH_FILES ? `最大${MAX_BATCH_FILES}枚までのため、先頭${MAX_BATCH_FILES}枚を読み込みました。` : "");
+  updateSaveButtonLabel();
+  if (list.length > MAX_BATCH_FILES){
+    showNote(`画像は最大${MAX_BATCH_FILES}枚までです。先頭${MAX_BATCH_FILES}枚を読み込みました。`);
+  }
+  await loadUser(userFiles[0]);
+}
+
 
 /* ---------- 表示 ---------- */
 const stage = document.getElementById("stage");
@@ -840,16 +1001,14 @@ function bind(id, valId, fmt, apply2){
 const bAmt    = bind("s-amt","v-amt", x=>x+"%", x=>S.amount=x/100);
 const bSize   = bind("s-size","v-size", x=>x.toFixed(2), x=>S.size=x);
 const bClump  = bind("s-clump","v-clump", x=>x+"%", x=>S.clump=x/100);
-const bFine   = bind("s-fine","v-fine", x=>x+"%", x=>S.fine=x/100);
-const bDens   = bind("s-dens","v-dens", x=>x+"%", x=>S.dens=x/100);
-const bSkew   = bind("s-skew","v-skew", x=>x+"%", x=>S.skew=x/100);
-const bAniso  = bind("s-aniso","v-aniso", x=>x.toFixed(2), x=>S.aniso=x);
 const bChroma = bind("s-chroma","v-chroma", x=>x+"%", x=>S.chroma=x/100);
 const bWR     = bind("s-wr","v-wr", x=>x+"%", x=>S.wR=x/100);
 const bWG     = bind("s-wg","v-wg", x=>x+"%", x=>S.wG=x/100);
 const bWB     = bind("s-wb","v-wb", x=>x+"%", x=>S.wB=x/100);
+const bSpread = bind("s-spread","v-spread", x=>x+"%", x=>S.spread=x/100);
+const bBite   = bind("s-bite","v-bite", x=>x+"%", x=>S.bite=x/100);
 const B = [
-  bAmt, bSize, bClump, bFine, bDens, bSkew, bAniso, bChroma, bWR, bWG, bWB,
+  bAmt, bSize, bClump, bChroma, bWR, bWG, bWB, bSpread, bBite,
   bind("s-follow","v-follow", x=>x+"%", x=>S.follow=x/100),
   bind("s-dust","v-dust", x=>String(x), x=>S.dust=x),
   bind("s-dustsz","v-dustsz", x=>x.toFixed(2), x=>S.dustSize=x)
@@ -876,19 +1035,23 @@ function applyPreset(name){
   buildLUT();
   S.perChannel = P.perChannel;
   const d = {"s-size":P.size, "s-clump":Math.round(P.clump*100),
-             "s-fine":Math.round(P.fine*100), "s-dens":Math.round(P.dens*100),
-             "s-skew":Math.round(P.skew*100), "s-aniso":P.aniso,
              "s-chroma":Math.round(P.indep*100),
              "s-wr":Math.round(P.wR*100), "s-wg":Math.round(P.wG*100), "s-wb":Math.round(P.wB*100)};
   for (const id in d) document.getElementById(id).value = d[id];
-  [bSize,bClump,bFine,bDens,bSkew,bAniso,bChroma,bWR,bWG,bWB].forEach(b => b.upd());
-  for (const k in PRESETS)
-    document.getElementById("p-"+k).classList.toggle("on", k===name);
-  document.getElementById("p-note").textContent = P.note;
+  [bSize,bClump,bChroma,bWR,bWG,bWB].forEach(b => b.upd());
+  for (const k in PRESETS){
+    const btn = document.getElementById("p-"+k);
+    if (btn) btn.classList.toggle("on", k===name);
+  }
+  const pNote = document.getElementById("p-note");
+  if (pNote) pNote.textContent = P.note;
   noiseCache = {key:"", f:null};
   render(); plot();
 }
-for (const k in PRESETS) document.getElementById("p-"+k).onclick = () => applyPreset(k);
+for (const k in PRESETS){
+  const btn = document.getElementById("p-"+k);
+  if (btn) btn.onclick = () => applyPreset(k);
+}
 
 const fmtBtn = document.getElementById("b-fmt") || {classList:{toggle(){}}, style:{}};
 function setFmt(f){
@@ -901,7 +1064,9 @@ function setFmt(f){
     : "JPEG 品質96で書き出します。軽い代わりに、色差が間引かれて粒の色がやや潰れます。";
 }
 if (fmtBtn) fmtBtn.onclick = () => setFmt(S.fmt === "png" ? "jpeg" : "png");
-setFmt("png");
+// 粒は圧縮が効かないので、PNG は出力も encoder の作業領域も最大になる。
+// iOS はそこで落ちるので JPEG を初期値にする（PNG にも手動で切り替えられる）
+setFmt(isIOSDevice() ? "jpeg" : "png");
 
 document.getElementById("b-reset").onclick = () => {
   const d = {"s-amt":100,"s-follow":100,"s-dust":0,"s-dustsz":1
@@ -910,6 +1075,90 @@ document.getElementById("b-reset").onclick = () => {
   B.forEach(b => b.upd());
   applyPreset(S.preset);
 };
+
+function captureCurrentSettings(){
+  return {
+    preset:S.preset,
+    amount:S.amount, size:S.size, clump:S.clump, chroma:S.chroma, follow:S.follow,
+    wR:S.wR, wG:S.wG, wB:S.wB, dust:S.dust, dustSize:S.dustSize,
+    spread:S.spread, bite:S.bite,
+    autoScale:S.autoScale, fmt:S.fmt
+  };
+}
+function readUserPresets(){
+  try { return JSON.parse(localStorage.getItem(USER_PRESET_KEY) || "{}"); }
+  catch(_){ return {}; }
+}
+function writeUserPresets(data){
+  try { localStorage.setItem(USER_PRESET_KEY, JSON.stringify(data)); } catch(_){ }
+}
+function updateUserPresetButtons(){
+  const saved = readUserPresets();
+  [1,2,3].forEach(slot => {
+    const el = document.getElementById(`user-preset-meta-${slot}`);
+    const item = saved[slot];
+    if (!el) return;
+    if (!item || !item.data){
+      el.textContent = "未保存";
+      return;
+    }
+    const dt = new Date(item.savedAt || Date.now());
+    const mm = String(dt.getMonth()+1).padStart(2, "0");
+    const dd = String(dt.getDate()).padStart(2, "0");
+    const hh = String(dt.getHours()).padStart(2, "0");
+    const mi = String(dt.getMinutes()).padStart(2, "0");
+    el.textContent = `${mm}/${dd} ${hh}:${mi} 保存`;
+  });
+}
+function applySavedSettings(data){
+  if (!data) return;
+  if (data.preset) applyPreset(data.preset);
+  const sliderValues = {
+    "s-amt": Math.round((data.amount ?? S.amount) * 100),
+    "s-size": data.size ?? S.size,
+    "s-clump": Math.round((data.clump ?? S.clump) * 100),
+    "s-spread": Math.round((data.spread ?? S.spread) * 100),
+    "s-bite": Math.round((data.bite ?? S.bite) * 100),
+    "s-chroma": Math.round((data.chroma ?? S.chroma) * 100),
+    "s-follow": Math.round((data.follow ?? S.follow) * 100),
+    "s-wr": Math.round((data.wR ?? S.wR) * 100),
+    "s-wg": Math.round((data.wG ?? S.wG) * 100),
+    "s-wb": Math.round((data.wB ?? S.wB) * 100),
+    "s-dust": data.dust ?? S.dust,
+    "s-dustsz": data.dustSize ?? S.dustSize
+  };
+  for (const id in sliderValues) document.getElementById(id).value = sliderValues[id];
+  document.getElementById("c-scale").checked = !!data.autoScale;
+  S.autoScale = !!data.autoScale;
+  B.forEach(b => b.upd());
+  setFmt(data.fmt === "jpeg" ? "jpeg" : "png");
+  render();
+  plot();
+}
+function saveUserPreset(slot){
+  const saved = readUserPresets();
+  saved[slot] = {savedAt:Date.now(), data:captureCurrentSettings()};
+  writeUserPresets(saved);
+  updateUserPresetButtons();
+  showNote(`プリセット ${slot} に保存しました。`);
+  setTimeout(() => hideNote(), 800);
+}
+function loadUserPreset(slot){
+  const saved = readUserPresets();
+  const item = saved[slot];
+  if (!item || !item.data){
+    showNote(`プリセット ${slot} はまだ保存されていません。`);
+    return;
+  }
+  applySavedSettings(item.data);
+  showNote(`プリセット ${slot} を適用しました。`);
+  setTimeout(() => hideNote(), 700);
+}
+[1,2,3].forEach(slot => {
+  document.getElementById(`user-preset-save-${slot}`).onclick = () => saveUserPreset(slot);
+  document.getElementById(`user-preset-load-${slot}`).onclick = () => loadUserPreset(slot);
+});
+updateUserPresetButtons();
 
 /* ---------- 書き出し ---------- */
 function canvasAlive(c){
@@ -922,47 +1171,78 @@ function canvasAlive(c){
   } catch(e){ return false; }
 }
 
+/* 幅高を0にすると裏バッファが即返る。GC待ちにしないための決め手 */
+function releaseCanvas(c){
+  try { if (c){ c.width = 0; c.height = 0; } } catch(_){}
+}
+
+/* iOS Safari はキャンバス面積とプロセスメモリの両方に上限がある。
+   原寸で試してから落とす作りだと、失敗ではなくタブごと落ちて戻ってこない。
+   だから最初から上限を掛ける。数値を上げると大きく書き出せるが落ちやすくなる */
+const IOS_EXPORT_AREA = 8e6;   // 約3460x2300。iPhoneで写真に残すには十分で、ここが落ちない上限
+function exportAreaCap(){
+  return isIOSDevice() ? IOS_EXPORT_AREA : null;
+}
+
 /* 原寸のきれいな元データから合成し直す。プレビュー用キャンバスは既に粒が乗っているので使わない */
-function buildExport(maxArea){
-  let w, h, data, fullW;
-  if (fullBaseCanvas){
-    fullW = fullBaseCanvas.width;
-    w = fullBaseCanvas.width; h = fullBaseCanvas.height;
-    if (maxArea && w*h > maxArea){
-      const k = Math.sqrt(maxArea/(w*h));
-      w = Math.max(1, Math.round(w*k)); h = Math.max(1, Math.round(h*k));
-    }
+function buildExportFromCanvas(sourceCanvas, maxArea){
+  const fullW0 = sourceCanvas.width;
+  let w = sourceCanvas.width, h = sourceCanvas.height;
+  if (maxArea && w*h > maxArea){
+    const k = Math.sqrt(maxArea/(w*h));
+    w = Math.max(1, Math.round(w*k)); h = Math.max(1, Math.round(h*k));
+  }
+
+  // 縮小が要らないなら c0 を作らず元キャンバスから直接読む（原寸1枚分が浮く）
+  let data;
+  if (w === sourceCanvas.width && h === sourceCanvas.height){
+    if (!canvasAlive(sourceCanvas)) return null;
+    data = sourceCanvas.getContext("2d").getImageData(0,0,w,h).data;
+  } else {
     const c0 = document.createElement("canvas");
     c0.width = w; c0.height = h;
     const x0 = c0.getContext("2d");
-    x0.drawImage(fullBaseCanvas, 0, 0, w, h);
-    if (!canvasAlive(c0)) return null;
+    x0.drawImage(sourceCanvas, 0, 0, w, h);
+    if (!canvasAlive(c0)){ releaseCanvas(c0); return null; }
     data = x0.getImageData(0,0,w,h).data;
-  } else {
-    fullW = S.w; w = S.w; h = S.h;
-    data = new Uint8ClampedArray(basePix);
+    releaseCanvas(c0);
   }
 
-  const keepPs = S.previewScale, keepView = S.view;
-  let px;
+  const keepPs = S.previewScale, keepView = S.view, keepFullW = S.fullW;
   try {
     S.previewScale = 1;
+    S.fullW = fullW0;
     if (S.view === "split") S.view = "single";
     noiseCache = {key:"", f:null};
-    const gp = Math.max(0.35, grainPxFull() * (w/fullW)) + 0.013;
-    px = apply(data, w, h, gp, -1, null);
+    const gp = Math.max(GRAIN_FLOOR, grainPxFull() * (w/fullW0)) + 0.013;
+    apply(data, w, h, gp, -1, null, data);   // data の上に直接書く
   } finally {
-    S.previewScale = keepPs; S.view = keepView;
+    S.previewScale = keepPs;
+    S.view = keepView;
+    S.fullW = keepFullW;
     noiseCache = {key:"", f:null};
   }
 
   const c2 = document.createElement("canvas");
   c2.width = w; c2.height = h;
   const x2 = c2.getContext("2d");
-  const im = x2.createImageData(w, h);
-  im.data.set(px);
+  let im;
+  try { im = new ImageData(data, w, h); }
+  catch(_){ im = x2.createImageData(w, h); im.data.set(data); }
   x2.putImageData(im, 0, 0);
   return c2;
+}
+
+function buildExport(maxArea){
+  if (fullBaseCanvas) return buildExportFromCanvas(fullBaseCanvas, maxArea);
+
+  const c0 = document.createElement("canvas");
+  c0.width = S.w; c0.height = S.h;
+  const x0 = c0.getContext("2d");
+  const im0 = x0.createImageData(S.w, S.h);
+  im0.data.set(new Uint8ClampedArray(basePix));
+  x0.putImageData(im0, 0, 0);
+  return buildExportFromCanvas(c0, maxArea);
 }
 
 function scaledCopy(c, maxSide){
@@ -987,113 +1267,267 @@ function tryDownload(blob, name, newTab){
   } catch(e){ return false; }
 }
 
-async function deliver(c2, sizeNote){
+async function canvasToExportFile(c2, name){
   const png = S.fmt === "png";
   const mime = png ? "image/png" : "image/jpeg";
   const q = png ? undefined : 0.96;
-  const name = "grain_" + Date.now() + (png ? ".png" : ".jpg");
   const blob = await new Promise(r => { try { c2.toBlob(r, mime, q); } catch(e){ r(null); } });
-
-  // 枠の外で開いていれば、押した時点でそのまま端末に落ちる
-  if (!inFrame && blob && tryDownload(blob, name)){
-    hideNote(); render(); return;
-  }
-
-  const disp = scaledCopy(c2, 1800);
-  const dispUrl = disp.toDataURL("image/jpeg", 0.9);   // 表示用は軽さ優先
-  const big = c2.width*c2.height > 12e6;
-
-  showNoteHTML(
-    "書き出しました。" + c2.width + "×" + c2.height + "px、" + (png ? "PNG" : "JPEG") + "。" + (sizeNote || "") +
-    '<img id="n-img" src="' + dispUrl + '" alt="書き出した画像">' +
-    '<div style="display:flex;gap:6px;flex-wrap:wrap">' +
-      '<button id="n-save">デバイスに保存</button>' +
-      (big ? '<button id="n-full">原寸で表示</button>' : '') +
-      '<button id="n-close">閉じる</button></div>' +
-    '<p class="caption">保存されないときは上の画像を長押し（右クリック）してください。' +
-    (big ? 'その場合は先に「原寸で表示」を押してください。' : '') + '</p>');
-
-  const close = document.getElementById("n-close");
-  if (close) close.onclick = () => { hideNote(); render(); };
-
-  const full = document.getElementById("n-full");
-  if (full) full.onclick = () => {
-    full.disabled = true; full.textContent = "生成中…";
-    setTimeout(() => {
-      try { document.getElementById("n-img").src = c2.toDataURL(mime, q); full.textContent = "原寸を表示中"; }
-      catch(e){ full.textContent = "原寸の生成に失敗"; }
-    }, 40);
-  };
-
-  // 押された瞬間に保存系を呼ぶ。重い処理は済ませてあるので操作の権限が生きている
-  const save = document.getElementById("n-save");
-  if (save) save.onclick = async () => {
-    if (!blob){ save.textContent = "データを作れませんでした"; return; }
-    save.disabled = true; save.textContent = "保存中…";
-    let ok = false;
-
-    // 1) 保存ダイアログ（PCのChrome系）
-    if (window.showSaveFilePicker){
-      try {
-        const h = await window.showSaveFilePicker({
-          suggestedName: name,
-          types: png ? [{description:"PNG", accept:{"image/png":[".png"]}}]
-                     : [{description:"JPEG", accept:{"image/jpeg":[".jpg",".jpeg"]}}]
-        });
-        const w = await h.createWritable();
-        await w.write(blob); await w.close();
-        ok = true;
-      } catch(e){
-        if (e && e.name === "AbortError"){ save.disabled = false; save.textContent = "デバイスに保存"; return; }
-      }
-    }
-    // 2) 共有シート（iPhone / Android）。ここから写真アプリに保存できる
-    if (!ok && navigator.canShare){
-      try {
-        const f = new File([blob], name, {type:mime});
-        if (navigator.canShare({files:[f]})){ await navigator.share({files:[f], title:name}); ok = true; }
-      } catch(e){ /* 閉じられただけの場合もある */ }
-    }
-    // 3) 通常のダウンロード。枠の中では別タブを指定して、この画面が消えないようにする
-    if (!ok) ok = tryDownload(blob, name, inFrame);
-
-    save.disabled = false;
-    save.textContent = ok ? "保存しました" : "保存できませんでした";
-  };
+  if (!blob) throw new Error("書き出しデータを作れませんでした");
+  return new File([blob], name, {type:mime});
 }
 
-document.getElementById("b-save").onclick = () => {
-  showNote("書き出し中…");
-  setTimeout(async () => {
-    try {
-      let c2 = buildExport(null), sizeNote = "";
-      if (!c2){
-        c2 = buildExport(16.7e6);
-        sizeNote = "原寸ではキャンバスを確保できなかったため縮小しました。";
-      }
-      if (!c2){
-        c2 = buildExport(4e6);
-        sizeNote = "この環境の上限に合わせて大きく縮小しました。";
-      }
-      if (!c2){ showNote("書き出し用のキャンバスを確保できませんでした。"); return; }
-      await deliver(c2, sizeNote);
-    } catch(err){
-      showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
+function exportNameFor(originalName, index){
+  const ext = S.fmt === "png" ? ".png" : ".jpg";
+  const base = (originalName || `grain_${Date.now()}_${index+1}`).replace(/\.[^.]+$/, "");
+  return base + "_grain" + ext;
+}
+
+function canShareFiles(files){
+  try {
+    return !!(navigator.share && navigator.canShare && files && files.length && navigator.canShare({files}));
+  } catch(_){
+    return false;
+  }
+}
+
+function revokeExportResultURLs(){
+  exportResultURLs.forEach(u => URL.revokeObjectURL(u));
+  exportResultURLs = [];
+}
+
+function openSavePreview(file, existingURL){
+  if (!file) return;
+
+  const overlay = document.createElement("div");
+  overlay.className = "save-preview";
+
+  const guide = document.createElement("div");
+  guide.className = "guide";
+  guide.innerHTML = '画像を長押しして「写真に保存」<small>共有シートが使えなかったときの予備画面です。</small>';
+
+  const imageWrap = document.createElement("div");
+  imageWrap.className = "image-wrap";
+  const img = document.createElement("img");
+  let ownURL = null;
+  img.src = existingURL || (ownURL = URL.createObjectURL(file));
+  img.alt = "保存する加工済み画像";
+  imageWrap.appendChild(img);
+
+  const close = document.createElement("button");
+  close.type = "button";
+  close.className = "close-save-preview";
+  close.textContent = "一覧に戻る";
+  close.onclick = () => {
+    if (ownURL) URL.revokeObjectURL(ownURL);
+    overlay.remove();
+  };
+
+  overlay.append(guide, imageWrap, close);
+  document.body.appendChild(overlay);
+}
+
+function fileToDataURL(file){
+  return new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload  = () => res(fr.result);
+    fr.onerror = () => rej(new Error("画像を読み込めませんでした"));
+    fr.readAsDataURL(file);
+  });
+}
+
+/* 長押しの予備画面。blob: だと iOS で「写真に保存」が出ないので data: に変換して渡す。
+   ただし data: は base64 なので原寸の約1.33倍を文字列で抱える。
+   大きい画像でこれをやるとタブごと落ちるので、小さいときだけにする */
+const DATAURL_LIMIT = 6 * 1024 * 1024;
+function fallbackSavePreview(file, blobURL){
+  if (file.size > DATAURL_LIMIT){
+    openSavePreview(file, blobURL || null);
+    return;
+  }
+  fileToDataURL(file)
+    .then(u => openSavePreview(file, u))
+    .catch(() => openSavePreview(file, blobURL || null));
+}
+
+async function exportCurrentViewFile(){
+  let c2 = buildExport(exportAreaCap());
+  if (!c2) c2 = buildExport(8e6);
+  if (!c2) c2 = buildExport(4e6);
+  if (!c2) throw new Error("書き出し用のキャンバスを確保できませんでした。");
+  try {
+    return await canvasToExportFile(c2, exportNameFor(userFiles[currentFileIndex]?.name || ("grain_" + Date.now()), Math.max(0, currentFileIndex)));
+  } finally {
+    releaseCanvas(c2);
+  }
+}
+
+/* ---------- 保存 ----------
+   iOS の navigator.share() は「ユーザー操作の最中」でないと弾かれる。
+   await を挟むと弾かれることがあるので、加工済みファイルを保持しておき、
+   2回目以降のタップは await ゼロで同期的に share() を呼ぶ。
+   これでタイミングの問題が原理的に起きない */
+
+let preparedExport = null;    // {key, file}
+let saveDiag = [];
+function dg(msg){ saveDiag.push(msg); }
+
+function exportKey(){
+  try {
+    return JSON.stringify(captureCurrentSettings()) + "|" + currentFileIndex +
+           "|" + S.fmt + "|" + (userFiles[currentFileIndex]?.name || "");
+  } catch(_){ return "k" + Date.now(); }
+}
+
+function saveBtn(){ return document.getElementById("b-save"); }
+
+function setSaveLabel(t){
+  const b = saveBtn();
+  if (b) b.textContent = t;
+}
+
+/* 失敗したときに何が起きたかを画面に出す。これを見せてもらえれば原因が分かる */
+function showSaveDiag(file, headline){
+  const lines = [
+    headline,
+    "",
+    "navigator.share: " + (navigator.share ? "あり" : "なし"),
+    "navigator.canShare: " + (navigator.canShare ? "あり" : "なし"),
+    "canShare({files}): " + (() => {
+      try { return navigator.canShare ? String(navigator.canShare({files:[file]})) : "判定不可"; }
+      catch(e){ return "例外 " + (e.name || e); }
+    })(),
+    "ファイル: " + file.name + " / " + file.type + " / " + Math.round(file.size/1024) + "KB",
+    "secure context: " + String(window.isSecureContext),
+    "iframe内: " + String(window.top !== window.self),
+    "",
+    "経過:",
+    ...saveDiag.map(x => "  " + x)
+  ];
+  showNote(lines.join("\n"));
+}
+
+/* 保存の入口。PC はダウンロード、モバイルは共有シート。
+   どちらも駄目なときだけ最後の手段に落とす */
+function deliver(file, isFirstTry){
+  if (!isMobileLike()){
+    if (tryDownload(file, file.name)){
+      dg("ダウンロード開始");
+      hideNote();
+      setSaveLabel(saveLabel());
+      return;
     }
-  }, 60);
+    dg("a[download] が使えなかった");
+    if (navigator.share) { shareNow(file, isFirstTry); return; }
+    showSaveDiag(file, "ダウンロードを開始できませんでした。");
+    return;
+  }
+  shareNow(file, isFirstTry);
+}
+
+/* モバイル向け。駄目なときはダウンロードに落とす（iOS ならファイルアプリに入る） */
+function lastResort(file, headline){
+  if (tryDownload(file, file.name)){
+    dg("共有が駄目だったのでダウンロードに変更");
+    showNote("共有シートが使えなかったので、ファイルとして保存しました。\n写真アプリに入れる場合はファイルアプリから共有してください。");
+    return;
+  }
+  showSaveDiag(file, headline);
+}
+
+function shareNow(file, isFirstTry){
+  if (!navigator.share){
+    dg("navigator.share が無い");
+    lastResort(file, "この環境では共有シートが使えません。");
+    return;
+  }
+  if (navigator.canShare){
+    let ok = false;
+    try { ok = navigator.canShare({files:[file]}); }
+    catch(e){ dg("canShare で例外 " + (e.name || e)); }
+    if (!ok){
+      dg("canShare({files}) が false");
+      lastResort(file, "この環境は画像の共有に対応していないようです。");
+      return;
+    }
+  }
+
+  let p;
+  try {
+    p = navigator.share({files:[file]});
+  } catch(e){
+    dg("share() が同期的に例外 " + (e.name || "") + " " + (e.message || e));
+    if (isFirstTry){ armSecondTap(file); } else { lastResort(file, "共有シートを開けませんでした。"); }
+    return;
+  }
+
+  p.then(() => {
+    dg("share 成功");
+    hideNote();
+    setSaveLabel(saveLabel());
+  }).catch(e => {
+    if (e && e.name === "AbortError"){ hideNote(); setSaveLabel(saveLabel()); return; }
+    dg("share 失敗 " + (e.name || "") + " " + (e.message || e));
+    if (isFirstTry){ armSecondTap(file); } else { lastResort(file, "共有シートを開けませんでした。"); }
+  });
+}
+
+/* 加工は終わっているので、次のタップは await ゼロで share() に入れる */
+function armSecondTap(file){
+  setSaveLabel("もう一度タップで保存");
+  showNote("加工は終わりました。\n\niOS が保存を一度止めたので、\nもう一度「もう一度タップで保存」を押してください。\n2回目は確実に共有シートが開きます。");
+}
+
+saveBtn().onclick = async () => {
+  const key = exportKey();
+
+  // 準備済みなら await を一切挟まずそのまま共有シートへ
+  if (preparedExport && preparedExport.key === key){
+    dg("準備済みを同期で共有");
+    deliver(preparedExport.file, false);
+    return;
+  }
+
+  saveDiag = [];
+  revokeExportResultURLs();
+  preparedExport = null;
+  hideNote();
+
+  const btn = saveBtn();
+  btn.disabled = true;
+  setSaveLabel("加工中…");
+  const t0 = Date.now();
+
+  let f;
+  try {
+    f = await exportCurrentViewFile();
+  } catch(err){
+    btn.disabled = false;
+    setSaveLabel("写真に保存");
+    showNote("書き出しに失敗しました\n" + (err && err.message ? err.message : err));
+    return;
+  }
+  btn.disabled = false;
+  setSaveLabel(saveLabel());
+
+  dg("加工 " + ((Date.now()-t0)/1000).toFixed(1) + "秒");
+  preparedExport = {key, file:f};
+  deliver(f, true);
 };
 
 /* ---------- 画像読み込み ---------- */
 const fileEl = document.getElementById("file");
 document.getElementById("b-open").onclick = () => fileEl.click();
-fileEl.addEventListener("change", e => { if (e.target.files[0]) loadUser(e.target.files[0]); });
+fileEl.addEventListener("change", async e => {
+  if (e.target.files && e.target.files.length) await setBatchFiles(e.target.files);
+  fileEl.value = "";
+});
 
 const dropEl = document.getElementById("drop");
 ["dragenter","dragover"].forEach(t => mainEl.addEventListener(t, e => { e.preventDefault(); dropEl.classList.add("show"); }));
 ["dragleave","drop"].forEach(t => mainEl.addEventListener(t, e => { e.preventDefault(); dropEl.classList.remove("show"); }));
-mainEl.addEventListener("drop", e => {
-  const f = e.dataTransfer.files[0];
-  if (f) loadUser(f);
+mainEl.addEventListener("drop", async e => {
+  const files = Array.from(e.dataTransfer.files || []).filter(Boolean);
+  if (files.length) await setBatchFiles(files);
 });
 
 async function decodeFile(file){
@@ -1134,13 +1568,16 @@ async function decodeFile(file){
 }
 
 async function loadUser(file){
+  const token = ++loadUserToken;
   showNote("読み込み中…\n" + file.name + "\n" + (file.type || "形式不明") +
            " / " + Math.round(file.size/1024) + "KB");
   let img, via;
   try {
     const r = await decodeFile(file);
+    if (token !== loadUserToken) return;
     img = r.img; via = r.via;
   } catch(e){
+    if (token !== loadUserToken) return;
     const heic = /heic|heif/i.test(file.type + " " + file.name);
     showNote(
       "この画像を展開できませんでした。\n\n" +
@@ -1150,6 +1587,7 @@ async function loadUser(file){
       "試した経路:\n" + (e.tried || []).join("\n"));
     return;
   }
+  if (token !== loadUserToken) return;
   hideNote();
 
   const iw = img.naturalWidth || img.width, ih = img.naturalHeight || img.height;
@@ -1160,9 +1598,20 @@ async function loadUser(file){
   S.previewScale = k;
   S.w = Math.round(iw*k); S.h = Math.round(ih*k);
 
+  // 原寸キャンバスは書き出しの元になる。iOS ではここで上限を掛けておかないと
+  // 読み込んだ時点でメモリを食い尽くす
+  const cap = exportAreaCap();
+  let bw = iw, bh = ih;
+  if (cap && bw*bh > cap){
+    const kk = Math.sqrt(cap/(bw*bh));
+    bw = Math.max(1, Math.round(bw*kk)); bh = Math.max(1, Math.round(bh*kk));
+  }
+  releaseCanvas(fullBaseCanvas);
   fullBaseCanvas = document.createElement("canvas");
-  fullBaseCanvas.width = iw; fullBaseCanvas.height = ih;
-  fullBaseCanvas.getContext("2d").drawImage(img, 0, 0);
+  fullBaseCanvas.width = bw; fullBaseCanvas.height = bh;
+  fullBaseCanvas.getContext("2d").drawImage(img, 0, 0, bw, bh);
+  S.fullW = bw;
+  S.previewScale = S.w / bw;   // 粒径は原寸基準なので、上限を掛けた後の幅に合わせる
 
   cv.width = S.w; cv.height = S.h;
   ctx.drawImage(img, 0, 0, S.w, S.h);
@@ -1176,10 +1625,7 @@ async function loadUser(file){
   document.getElementById("b-split").disabled = true;
   noiseCache = {key:"", f:null};
   setView("single");
-  document.getElementById("status").textContent =
-    file.name + " / " + iw + "×" + ih + "（" + via + "）。粒径は原寸で " +
-    grainPxFull().toFixed(2) + "px 相当。プレビューは " + S.w +
-    "px 幅の縮小版で、書き出しは原寸で計算します。";
+  updateLoadedStatus(file, via, iw, ih);
   render(); fit();
 }
 
@@ -1229,9 +1675,11 @@ function ready(){
 
     document.getElementById("status").textContent =
       "サンプルは 000039 の等倍切り出し。左が実際のフィルム、右はそれをデノイズして粒を消したものに合成グレインを乗せています。";
+    updateQueueMeta();
+    updateSaveButtonLabel();
+    refreshThumbs();
     applyPreset("minilab");
     plot(); render(); setZoom(1); center();
-    booted = true;
   } catch(err){ showNote("初期化に失敗しました\n" + err.message); }
 }
 function failed(which){
