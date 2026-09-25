@@ -202,16 +202,16 @@
       <input type="range" id="s-amt" min="0" max="200" value="100" step="1">
     </div>
     <div class="ctl">
-      <div class="row"><label for="s-size">粒径</label><span class="val num" id="v-size">1.19</span></div>
-      <input type="range" id="s-size" min="0.2" max="5" value="1.19" step="0.01">
+      <div class="row"><label for="s-size">粒の大きさ</label><span class="val num" id="v-size">0.37</span></div>
+      <input type="range" id="s-size" min="0.2" max="8" value="0.37" step="0.01">
       <label class="check" style="margin-top:6px">
         <input type="checkbox" id="c-scale">
-        粒径を画像の横幅で換算する
+        粒の大きさを画像の横幅で換算する
       </label>
     </div>
     <div class="ctl">
-      <div class="row"><label for="s-clump">粒のまとまり</label><span class="val num" id="v-clump">100%</span></div>
-      <input type="range" id="s-clump" min="0" max="100" value="100" step="1">
+      <div class="row"><label for="s-clump">粒の間隔</label><span class="val num" id="v-clump">1.10</span></div>
+      <input type="range" id="s-clump" min="0.80" max="1.80" value="1.10" step="0.01">
 
       <div class="row"><label for="s-spread">粒のばらつき</label><span class="val num" id="v-spread">55%</span></div>
       <input type="range" id="s-spread" min="0" max="100" value="55" step="1">
@@ -349,8 +349,8 @@ const CURVE_CHANNEL  = [0.857,0.891,0.924,0.953,0.982,0.991,1.000,0.981,0.962,
 const PRESETS = {
   minilab: {
     label:"ミニラボ 35mm",
-    note:"かにさんのフロンティア355/375スキャン6枚。輝度カーブは実測、色は測定不能だったため均等。",
-    curve:CURVE_MINILAB, peak:8.72, size:1.19, clump:1,
+    note:"フロンティア355/375スキャン6枚。1818pxでは粒がほぼ1画素まで潰れており相関 +0.12。色は測定不能なので均等。",
+    curve:CURVE_MINILAB, peak:8.72, size:0.37, clump:1.10, ref:1818,
     perChannel:false, indep:0.06, wR:1.00, wG:1, wB:1.00,
     measured:[[8,2.35],[24,4.87],[40,7.60],[56,8.27],[72,8.92],[88,9.08],[104,7.48],
               [120,6.96],[136,7.63],[152,7.15],[168,6.75],[184,6.10],[200,5.33],
@@ -359,14 +359,14 @@ const PRESETS = {
   frontier6k: {
     label:"フロンティア 6K",
     note:"同じフロンティアの6Kスキャン、カラーチャート24パッチ実測。σは画面の明るさではなく各チャンネル自身の値で決まる。",
-    curve:CURVE_CHANNEL, peak:6.08, size:2.40, clump:1,
+    curve:CURVE_CHANNEL, peak:6.08, size:3.00, clump:1.10, ref:6000,
     perChannel:true, indep:0.63, wR:1.09, wG:1, wB:1.50,
     measured:[[16,5.45],[48,5.80],[80,6.05],[112,6.00],[144,5.50],[176,4.80],[208,4.10],[240,3.50]]
   },
   drum: {
     label:"ドラム 中判",
-    note:"Portra 400・6×7のドラムスキャン実測。粒の比と相関はここから、カーブの形はフロンティア6Kから借りている。",
-    curve:CURVE_CHANNEL, peak:6.08, size:2.60, clump:1,
+    note:"Portra 400・6×7のドラムスキャン実測。完全に等方で、フィルム本来の粒に最も近い。相関 +0.70 +0.31 +0.04 −0.07。",
+    curve:CURVE_CHANNEL, peak:6.08, size:3.40, clump:1.10, ref:5000,
     perChannel:true, indep:0.85, wR:1.27, wG:1, wB:1.83,
     measured:[[48,6.55],[112,9.06],[176,5.56],[208,4.12]]
   }
@@ -374,7 +374,7 @@ const PRESETS = {
 let CURVE = CURVE_MINILAB;
 let PEAK_SIGMA = 8.72;
 let MEASURED = PRESETS.minilab.measured;
-const REF_WIDTH  = 1818;
+const REF_WIDTH  = 1818;   // 既定。プリセットごとに ref で上書きする
 const MAX_PREVIEW = 2000;      // プレビューの作業解像度の上限
 
 const inFrame = (() => { try { return window.self !== window.top; } catch(e){ return true; } })();
@@ -418,85 +418,131 @@ function gaussAt(x, y, seed){
   return Math.sqrt(-2*Math.log(u1)) * Math.cos(6.283185307179586*u2);
 }
 
-/* AV1 と同じ自己回帰モデル。lag2 の因果近傍12点。
-   内側が正・外側が負なので、粒が寄り集まって塊になり、少し離れると反発する */
-const AR_BASE = [
-  -0.05, -0.10, -0.15, -0.10, -0.05,   // dy=-2, dx=-2..+2
-  -0.10,  0.20,  0.35,  0.20, -0.10,   // dy=-1, dx=-2..+2
-  -0.15,  0.45                         // dy= 0, dx=-2..-1
-];
-const AR_ABS = AR_BASE.reduce((a,b) => a + Math.abs(b), 0);
-const AR_WARM = 96;   // 帯の継ぎ目を消すための助走行数
+/* 粒を1粒ずつ撒く（ブーリアンモデル）。
+   格子の上で補間する方式は、粒がセルの対角線方向に伸び、縁が直線的な面になる。
+   実測では 45度の相関が 0度の倍近くあった（0度+0.141 に対し 45度+0.278）。
+   実フィルムはほぼ等方なので、これは格子そのものが原因。
+   円を撒けば向きの偏りは原理的に生じない。 */
+const GRAIN_SIGR = 0.35;   // 粒径の対数正規のばらつき（結晶サイズの分布）
 
-function arGrid(gw, gy0, gh, seed, clump){
-  const c = clump;                     // 係数の絶対値和は最大0.841。1未満なので発散しない
-  const total = gh + AR_WARM;
-  const g = new Float32Array(gw*total);
-  for (let j=0; j<total; j++){
-    const gy = gy0 - AR_WARM + j, r = j*gw;
-    for (let i=0; i<gw; i++){
-      let v = gaussAt(i, gy, seed);
-      if (c !== 0){
-        let k = 0;
-        for (let dy=-2; dy<=0; dy++){
-          const xmax = dy===0 ? -1 : 2, jj = j+dy;
-          for (let dx=-2; dx<=xmax; dx++, k++){
-            const ii = i+dx;
-            if (jj < 0 || ii < 0 || ii >= gw) continue;
-            v += AR_BASE[k]*c*g[jj*gw+ii];
-          }
-        }
-      }
-      g[r+i] = v;
+/* 粒ごとに exp(σ·N(0,1)) を計算すると log・cos・exp が毎回走って重い。
+   256段の表に焼いておけば、乱数1つ引くだけで同じ分布が得られる */
+const RAD_LUT = (() => {
+  const n = 256, t = new Float32Array(n);
+  for (let i=0; i<n; i++){
+    const u = (i + 0.5)/n;
+    // 標準正規の分位点（Acklam の有理近似を簡略化したもの）
+    const q = u - 0.5;
+    let z;
+    if (Math.abs(q) < 0.425){
+      const r = 0.180625 - q*q;
+      z = q*(((2509.08*r+33430.6)*r+67265.8)*r+45921.95) /
+            (((5226.5*r+28729.1)*r+39307.9)*r+21213.79);
+    } else {
+      let r = q < 0 ? u : 1-u;
+      r = Math.sqrt(-Math.log(r));
+      z = (((1.423436*r+2.756179)*r+1.383577)*r+0.342431) /
+          ((0.632825*r+1.671364)*r+1);
+      if (q < 0) z = -z;
     }
+    t[i] = Math.exp(GRAIN_SIGR*Math.max(-2.5, Math.min(2.5, z)));
   }
-  return g;
+  return t;
+})();
+const RAD_MAX = (() => { let m=0; for (let i=0;i<RAD_LUT.length;i++) if (RAD_LUT[i]>m) m=RAD_LUT[i]; return m; })();
+
+/* 画素より細かい粒。1画素が多数の粒を平均するので、撒いても白色雑音にしかならない。
+   3タップの重み a を連続で変えれば、撒く経路と同じ相関を桁違いに速く作れる。
+   a は半径から較正した値（FINE_A）を使う。 */
+function FINE_A(s){
+  // s=0.62 で撒く経路の lag1 +0.305 に一致するよう較正
+  const t = Math.max(0, Math.min(1, (s-0.20)/0.42));
+  return t*0.205;
 }
-
-function rawField(w, h, s, seed, yOff, clump){
-  const inv = 1/s;
-  const gy0 = Math.floor(yOff*inv), gy1 = Math.floor((yOff+h-1)*inv)+1;
-  const gh = gy1-gy0+1, gw = Math.ceil(w*inv)+2;
-  const g = arGrid(gw, gy0, gh, seed, clump);
-
-  const ix = new Int32Array(w), fx = new Float32Array(w);
-  for (let x=0; x<w; x++){
-    const t = x*inv, i = Math.floor(t);
-    let f = t-i; f = f*f*(3-2*f);
-    ix[x] = i; fx[x] = f;
+function fineField(w, h, s, seed, yOff){
+  const a = FINE_A(s);
+  const n = 1/(1+2*a);
+  const N0 = new Float32Array(w*(h+2));               // 上下1行ぶん多く引く
+  for (let y=-1; y<=h; y++){
+    const gy = y+yOff, o = (y+1)*w;
+    for (let x=0; x<w; x++) N0[o+x] = gaussAt(x, gy, seed);
+  }
+  if (a <= 0.001){
+    const out = new Float32Array(w*h);
+    out.set(N0.subarray(w, w+w*h));
+    return out;
+  }
+  const tmp = new Float32Array(w*(h+2));
+  for (let y=0; y<h+2; y++){
+    const o = y*w;
+    for (let x=0; x<w; x++){
+      const l = x>0 ? N0[o+x-1] : N0[o+x], r = x<w-1 ? N0[o+x+1] : N0[o+x];
+      tmp[o+x] = (N0[o+x] + a*(l+r))*n;
+    }
   }
   const out = new Float32Array(w*h);
   for (let y=0; y<h; y++){
-    const t = (y+yOff)*inv, fl = Math.floor(t), iy = fl-gy0+AR_WARM;
-    let fy = t-fl; fy = fy*fy*(3-2*fy);
-    const r0 = iy*gw, r1 = (iy+1)*gw, o = y*w;
-    for (let x=0; x<w; x++){
-      const i = ix[x], f = fx[x];
-      const a = g[r0+i], b = g[r0+i+1], cc = g[r1+i], d = g[r1+i+1];
-      out[o+x] = (a + (b-a)*f)*(1-fy) + (cc + (d-cc)*f)*fy;
+    const o = (y+1)*w, d = y*w;
+    for (let x=0; x<w; x++) out[d+x] = (tmp[o+x] + a*(tmp[o-w+x] + tmp[o+w+x]))*n;
+  }
+  return out;
+}
+
+function rawField(w, h, s, seed, yOff, gap){
+  if (s < 0.62) return fineField(w, h, s, seed, yOff);
+  const r0 = Math.max(0.62, s);
+  const cell = Math.max(0.6, r0*gap);          // 粒の間隔。重なり = π/gap²
+  const maxR = r0*RAD_MAX + 1;   // RAD_MAX は表の最大値そのもの
+  const out = new Float32Array(w*h);
+  const cx0 = Math.floor(-maxR/cell), cx1 = Math.ceil((w+maxR)/cell);
+  const cy0 = Math.floor((yOff-maxR)/cell), cy1 = Math.ceil((yOff+h+maxR)/cell);
+  const s1 = (seed ^ 0x5bf03635)|0, s2 = (seed ^ 0x9e3779b9)|0;
+
+  for (let cy=cy0; cy<=cy1; cy++){
+    for (let cx=cx0; cx<=cx1; cx++){
+      // 1セルに1粒。銀の結晶は重なれないので、完全な無作為ではなく
+      // 間隔を保って散らばる。これが実測の「少し離れると負に沈む」を作る
+      const px = (cx + cellRand(cx, cy, seed))*cell;
+      const py = (cy + cellRand(cx, cy, s1))*cell - yOff;
+      const r  = r0*RAD_LUT[(cellRand(cx, cy, s2)*256)|0];
+      const rOut = r + 0.5, rr = rOut*rOut;
+      const x0 = Math.max(0, Math.floor(px-rOut)), x1 = Math.min(w-1, Math.ceil(px+rOut));
+      const y0 = Math.max(0, Math.floor(py-rOut)), y1 = Math.min(h-1, Math.ceil(py+rOut));
+      for (let y=y0; y<=y1; y++){
+        const dy = y-py, dy2 = dy*dy, o = y*w;
+        for (let x=x0; x<=x1; x++){
+          const dx = x-px, d2 = dx*dx + dy2;
+          if (d2 > rr) continue;
+          // 縁の1画素は被覆率でなだらかに。硬い縁のままだと円が見えてしまう
+          let cov = r - Math.sqrt(d2) + 0.5;
+          if (cov >= 1) cov = 1; else if (cov <= 0) continue;
+          out[o+x] += cov;
+        }
+      }
     }
   }
   return out;
 }
 
-/* 粒径と塊の強さだけで決まる分散を一度測っておく。
-   帯ごとに測ると倍率がずれて継ぎ目になるので、必ずこの共通値を使う */
+/* 撒いた場は平均が正に偏っているので、平均と標準偏差で正規化する。
+   帯ごとに測ると倍率がずれて継ぎ目になるため、必ずこの共通値を使う */
 const sigCache = {};
-function fieldSigma(s, clump){
-  const key = s.toFixed(3)+"/"+clump.toFixed(3);
+function fieldStats(s, gap){
+  const key = s.toFixed(3)+"/"+gap.toFixed(3);
   if (sigCache[key]) return sigCache[key];
-  const f = rawField(192, 192, s, 9991, 0, clump);
+  const n = Math.max(192, Math.min(420, Math.round(Math.max(1,s)*70)));
+  const f = rawField(n, n, s, 9991, 0, gap);
   let m = 0; for (let i=0;i<f.length;i++) m += f[i]; m /= f.length;
   let q = 0; for (let i=0;i<f.length;i++){ const d = f[i]-m; q += d*d; }
-  const sd = Math.sqrt(q/f.length) || 1;
-  sigCache[key] = sd;
-  return sd;
+  const st = { m, sd: Math.sqrt(q/f.length) || 1 };
+  sigCache[key] = st;
+  return st;
 }
 
-function noiseField(w, h, s, seed, yOff, clump){
-  const f = rawField(w, h, s, seed, yOff, clump);
-  const k = 1/fieldSigma(s, clump);
-  for (let i=0;i<f.length;i++) f[i] *= k;
+function noiseField(w, h, s, seed, yOff, gap){
+  const f = rawField(w, h, s, seed, yOff, gap);
+  const st = fieldStats(s, gap), k = 1/st.sd, m = st.m;
+  for (let i=0;i<f.length;i++) f[i] = (f[i]-m)*k;
   return f;
 }
 
@@ -512,46 +558,54 @@ function mulberry32(a){
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
-function makeDust(w, h, perMP, scale, seed){
+/* ホコリと傷。位置を乱数列で撒くと帯ごとに別物になり、境目に筋が出る。
+   グレインと同じくセル座標から決めれば、どう分割しても同じ絵になる */
+function makeDust(w, h, perMP, scale, yOff, seed){
   const f = new Float32Array(w*h);
-  const n = Math.round(perMP * w*h/1e6);
-  if (n <= 0) return f;
-  const rnd = mulberry32(seed);
-  for (let i=0; i<n; i++){
-    const cx = rnd()*w, cy = rnd()*h;
-    const u = Math.max(1e-7, rnd()), v = rnd();
-    const gz = Math.sqrt(-2*Math.log(u))*Math.cos(6.283185307179586*v);
-    const area = Math.exp(1.15 + 0.75*gz);          // 中央値およそ3px
-    let r = Math.min(14, Math.sqrt(area/Math.PI)) * scale;
-    if (r < 0.4) continue;
-    const dark = rnd() < 0.44;                      // 実測の暗点比率
-    const amp = (dark ? -1 : 1) * (16 + rnd()*46);
-    // まれに引っかき傷（細長い）
-    const scratch = rnd() < 0.035;
-    const ex = scratch ? (3 + rnd()*12) : 1;
-    const ang = rnd()*Math.PI, ca = Math.cos(ang), sa = Math.sin(ang);
-    const rad = r*Math.max(1,ex);
-    const x0 = Math.max(0, Math.floor(cx-rad)), x1 = Math.min(w-1, Math.ceil(cx+rad));
-    const y0 = Math.max(0, Math.floor(cy-rad)), y1 = Math.min(h-1, Math.ceil(cy+rad));
-    for (let y=y0; y<=y1; y++){
-      for (let x=x0; x<=x1; x++){
-        const dx = x-cx, dy = y-cy;
-        const a1 = ( dx*ca + dy*sa)/(r*ex);
-        const a2 = (-dx*sa + dy*ca)/r;
-        const d = Math.sqrt(a1*a1 + a2*a2);
-        if (d > 1) continue;
-        const wgt = d < 0.6 ? 1 : (1-d)/0.4;        // 縁をわずかにぼかす
-        f[y*w+x] += amp*wgt;
+  if (perMP <= 0) return f;
+  const cell = Math.sqrt(1e6/perMP);
+  const maxRad = 14*scale*15 + 2;                    // 引っかき傷の最大長
+  const cx0 = Math.floor(-maxRad/cell), cx1 = Math.ceil((w+maxRad)/cell);
+  const cy0 = Math.floor((yOff-maxRad)/cell), cy1 = Math.ceil((yOff+h+maxRad)/cell);
+  for (let cy=cy0; cy<=cy1; cy++){
+    for (let cx=cx0; cx<=cx1; cx++){
+      const px = (cx + cellRand(cx, cy, seed))*cell;
+      const py = (cy + cellRand(cx, cy, (seed^0x2545f491)|0))*cell - yOff;
+      const gz = gaussAt(cx, cy, (seed^0x27d4eb2f)|0);
+      const area = Math.exp(1.15 + 0.75*gz);         // 中央値およそ3px
+      const r = Math.min(14, Math.sqrt(area/Math.PI)) * scale;
+      if (r < 0.4) continue;
+      const q1 = cellRand(cx, cy, (seed^0x165667b1)|0);
+      const q2 = cellRand(cx, cy, (seed^0x85ebca6b)|0);
+      const q3 = cellRand(cx, cy, (seed^0xc2b2ae35)|0);
+      const amp = (q1 < 0.44 ? -1 : 1) * (16 + q2*46);   // 実測の暗点比率44%
+      const ex = q3 < 0.035 ? (3 + cellRand(cx,cy,(seed^0x9e3779b1)|0)*12) : 1;
+      const ang = cellRand(cx, cy, (seed^0x7feb352d)|0)*Math.PI;
+      const ca = Math.cos(ang), sa = Math.sin(ang);
+      const rad = r*Math.max(1, ex);
+      const x0 = Math.max(0, Math.floor(px-rad)), x1 = Math.min(w-1, Math.ceil(px+rad));
+      const y0 = Math.max(0, Math.floor(py-rad)), y1 = Math.min(h-1, Math.ceil(py+rad));
+      for (let y=y0; y<=y1; y++){
+        for (let x=x0; x<=x1; x++){
+          const dx = x-px, dy = y-py;
+          const a1 = ( dx*ca + dy*sa)/(r*ex);
+          const a2 = (-dx*sa + dy*ca)/r;
+          const d = Math.sqrt(a1*a1 + a2*a2);
+          if (d > 1) continue;
+          const wgt = d < 0.6 ? 1 : (1-d)/0.4;
+          f[y*w+x] += amp*wgt;
+        }
       }
     }
   }
   return f;
 }
+
 let dustCache = {key:"", f:null};
 function getDust(w, h, yOff){
   const key = w+"x"+h+"+"+yOff+"/"+S.dust.toFixed(1)+"/"+S.dustSize.toFixed(2);
   if (dustCache.key === key) return dustCache.f;
-  const f = makeDust(w, h, S.dust, S.dustSize, 3571 + yOff*7919);
+  const f = makeDust(w, h, S.dust, S.dustSize, yOff, 3571);
   dustCache = {key, f};
   return f;
 }
@@ -559,7 +613,7 @@ function getDust(w, h, yOff){
 /* ---------- 状態 ---------- */
 const S = {
   amount:1, size:1.19, chroma:.40, follow:1,
-  clump:1, wR:1, wG:1, wB:1, perChannel:false, preset:'minilab',
+  clump:1.10, ref:1818, wR:1, wG:1, wB:1, perChannel:false, preset:'minilab',
   dust:0, dustSize:1, fmt:'png',
   spread:.55, bite:.35,
   autoScale:false, view:"split", zoom:1, panX:0, panY:0, split:.5,
@@ -582,14 +636,16 @@ const MAX_BATCH_FILES = 5;
 const USER_PRESET_KEY = "grain_user_presets_v1";
 
 function grainPxFull(){
-  return S.autoScale ? S.size * (S.fullW / REF_WIDTH) : S.size;
+  // 測定元のスキャン解像度はプリセットごとに違う。その基準で換算する
+  const ref = S.ref || REF_WIDTH;
+  return S.autoScale ? S.size * (S.fullW / ref) : S.size;
 }
 const GRAIN_FLOOR = 0.20;   // これ以下はピクセルより細かく、見た目が変わらない
 function grainPxWork(){
   return Math.max(GRAIN_FLOOR, grainPxFull() * S.previewScale) + 0.013;
 }
 
-const BAND_BUDGET = 1e6;   // ノイズ格子の上限。4e6だと格子だけで60MB超になる
+const BAND_BUDGET = 1.5e6;   // 1帯の画素数。場を7枚持つので 1.5e6 で約42MB
 const OCT_COARSE = 2.2;
 /* acc*m + co*wA の分散。m=1+mA*(|co|-0.7979) で co は分散1。
    E[m^2] = 1 + mA^2*Var(|N|) = 1 + mA^2*(1-0.7979^2) を使う */
@@ -639,8 +695,7 @@ function getNoise(w, h, s, yOff){
 function apply(srcPix, w, h, sizePx, splitPx, realSrc, dst){
   const out = dst || new Uint8ClampedArray(srcPix.length);
 
-  const bandPx = Math.min(BAND_BUDGET, Math.max(1, BAND_BUDGET * sizePx * sizePx));
-  const bandH = Math.max(1, Math.min(h, Math.floor(bandPx / w)));
+  const bandH = Math.max(1, Math.min(h, Math.floor(BAND_BUDGET / w)));
 
   const t = S.chroma;                    // 0=3色共通の粒  1=完全に独立
   const a0 = Math.sqrt(1-t*t), a1 = t;   // これで合成後も分散1のまま
@@ -1000,7 +1055,7 @@ function bind(id, valId, fmt, apply2){
 }
 const bAmt    = bind("s-amt","v-amt", x=>x+"%", x=>S.amount=x/100);
 const bSize   = bind("s-size","v-size", x=>x.toFixed(2), x=>S.size=x);
-const bClump  = bind("s-clump","v-clump", x=>x+"%", x=>S.clump=x/100);
+const bClump  = bind("s-clump","v-clump", x=>x.toFixed(2), x=>S.clump=x);
 const bChroma = bind("s-chroma","v-chroma", x=>x+"%", x=>S.chroma=x/100);
 const bWR     = bind("s-wr","v-wr", x=>x+"%", x=>S.wR=x/100);
 const bWG     = bind("s-wg","v-wg", x=>x+"%", x=>S.wG=x/100);
@@ -1034,7 +1089,8 @@ function applyPreset(name){
   CURVE = P.curve; PEAK_SIGMA = P.peak; MEASURED = P.measured;
   buildLUT();
   S.perChannel = P.perChannel;
-  const d = {"s-size":P.size, "s-clump":Math.round(P.clump*100),
+  S.ref = P.ref || REF_WIDTH;
+  const d = {"s-size":P.size, "s-clump":P.clump,
              "s-chroma":Math.round(P.indep*100),
              "s-wr":Math.round(P.wR*100), "s-wg":Math.round(P.wG*100), "s-wb":Math.round(P.wB*100)};
   for (const id in d) document.getElementById(id).value = d[id];
@@ -1116,7 +1172,9 @@ function applySavedSettings(data){
   const sliderValues = {
     "s-amt": Math.round((data.amount ?? S.amount) * 100),
     "s-size": data.size ?? S.size,
-    "s-clump": Math.round((data.clump ?? S.clump) * 100),
+    // 粒の間隔は 0.85〜1.80。旧版は 0〜1 の「まとまり」だったので、
+    // その範囲の値は意味が違う。既定値に戻す
+    "s-clump": ((data.clump ?? S.clump) < 0.85 ? 1.25 : (data.clump ?? S.clump)),
     "s-spread": Math.round((data.spread ?? S.spread) * 100),
     "s-bite": Math.round((data.bite ?? S.bite) * 100),
     "s-chroma": Math.round((data.chroma ?? S.chroma) * 100),
